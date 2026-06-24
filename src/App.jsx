@@ -5,6 +5,57 @@ import { isSupabaseConfigured, supabase } from './supabaseClient'
 
 const storageKey = 'purrfect-relationship-tracker'
 const getInviteCode = () => Math.random().toString(36).slice(2, 10).toUpperCase()
+const getProfileExtrasKey = (userId) => `purrfect-profile-extras-${userId}`
+
+const getFriendlyError = (error, fallback = 'Something went wrong. Please try again.') => {
+  const message = error?.message ?? String(error ?? '')
+
+  if (message.includes('duplicate key') && message.includes('couple_members')) {
+    return 'You have already joined this couple workspace.'
+  }
+
+  if (message.includes('one_checkup_submission_per_window')) {
+    return 'You already submitted this check-up for the current window. It will open again next cycle.'
+  }
+
+  if (message.includes('duplicate key') || error?.code === '23505') {
+    return 'There is already a pending couple request between these two accounts.'
+  }
+
+  if (message.includes('row-level security')) {
+    return 'This action was blocked by the database security rules. Run the latest supabase-schema.sql in Supabase, then refresh this app.'
+  }
+
+  if (message.includes('profiles.bio') || message.includes('profiles.social_links')) {
+    return 'The app was trying to read old profile fields. Refresh the page to load the latest version.'
+  }
+
+  if (message.includes('Couple request was not found')) {
+    return 'That couple request is no longer pending. Refresh and check the current request list.'
+  }
+
+  if (message.includes('Only the recipient can accept')) {
+    return 'Only the person who received this request can accept it.'
+  }
+
+  if (message.includes("Could not find the table 'public.couple_requests'")) {
+    return 'The couple request table is missing in Supabase. Run the latest supabase-schema.sql in the Supabase SQL editor, then refresh this app.'
+  }
+
+  if (message.includes('schema cache')) {
+    return 'Supabase has not refreshed its schema cache yet. Run the latest supabase-schema.sql, wait a moment, then refresh this app.'
+  }
+
+  if (message.includes('invalid login credentials')) {
+    return 'The email or password is incorrect.'
+  }
+
+  if (message.includes('Password should be at least')) {
+    return 'Use a password with at least 6 characters.'
+  }
+
+  return message || fallback
+}
 
 const people = {
   me: { id: 'me', label: 'Me', possessive: 'My' },
@@ -21,6 +72,8 @@ const navItems = [
   { id: 'overview', label: 'Overview' },
   { id: 'checkups', label: 'Check-ups' },
   { id: 'history', label: 'History' },
+  { id: 'profile', label: 'Profile' },
+  { id: 'health', label: 'Health' },
 ]
 
 const principles = [
@@ -183,6 +236,7 @@ const questionSets = {
 }
 
 const ratingLabels = ['Hardly', 'A little', 'Somewhat', 'Mostly', 'Very much']
+const maxRating = 5
 
 const formatDate = (dateValue) => (
   new Intl.DateTimeFormat('en', {
@@ -192,6 +246,62 @@ const formatDate = (dateValue) => (
   }).format(new Date(dateValue))
 )
 
+const getWeekStart = (date) => {
+  const weekStart = new Date(date)
+  const day = weekStart.getDay()
+  const diff = day === 0 ? -6 : 1 - day
+  weekStart.setHours(0, 0, 0, 0)
+  weekStart.setDate(weekStart.getDate() + diff)
+  return weekStart
+}
+
+const getPeriodWindow = (period, dateValue = new Date()) => {
+  const date = new Date(dateValue)
+  const start = new Date(date)
+  const end = new Date(date)
+
+  if (period === 'daily') {
+    start.setHours(0, 0, 0, 0)
+    end.setTime(start.getTime())
+    end.setDate(end.getDate() + 1)
+  } else if (period === 'weekly') {
+    start.setTime(getWeekStart(date).getTime())
+    end.setTime(start.getTime())
+    end.setDate(end.getDate() + 7)
+  } else {
+    start.setFullYear(date.getFullYear(), date.getMonth(), 1)
+    start.setHours(0, 0, 0, 0)
+    end.setTime(start.getTime())
+    end.setMonth(end.getMonth() + 1)
+  }
+
+  const windowKey = period === 'daily'
+    ? start.toISOString().slice(0, 10)
+    : period === 'weekly'
+      ? `week-${start.toISOString().slice(0, 10)}`
+      : start.toISOString().slice(0, 7)
+
+  return { end, start, windowKey }
+}
+
+const getPeriodAvailability = (period, history, person) => {
+  const window = getPeriodWindow(period)
+  const submittedEntry = history.find((entry) => {
+    if (entry.period !== period || entry.person !== person) {
+      return false
+    }
+
+    const submittedAt = new Date(entry.createdAt)
+    return submittedAt >= window.start && submittedAt < window.end
+  })
+
+  return {
+    ...window,
+    isSubmitted: Boolean(submittedEntry),
+    submittedEntry,
+  }
+}
+
 const makeInitialResponses = () => (
   Object.fromEntries(
     Object.entries(questionSets).map(([period, set]) => [
@@ -199,7 +309,7 @@ const makeInitialResponses = () => (
       Object.fromEntries(
         principles.map((principle) => [
           principle.id,
-          set.questions[principle.id].map(() => Math.round(principle.baseValue / 20)),
+          set.questions[principle.id].map(() => maxRating),
         ]),
       ),
     ]),
@@ -302,6 +412,7 @@ const mapSubmissionRow = (row, currentUserId, memberLabels = {}) => {
     responses: row.responses,
     note: row.note ?? '',
     createdAt: row.created_at,
+    periodWindow: row.period_window,
     userId: row.user_id,
   }
 }
@@ -476,7 +587,7 @@ const PersonSwitch = ({ activePerson, onChange }) => (
   </div>
 )
 
-const PrincipleCard = ({ principle, coupleScore, meScore, partnerScore }) => {
+const PrincipleCard = ({ principle, coupleScore, meScore, partnerScore, partnerLabel = people.partner.label }) => {
   const gap = Math.abs(meScore - partnerScore)
 
   return (
@@ -520,7 +631,7 @@ const PrincipleCard = ({ principle, coupleScore, meScore, partnerScore }) => {
 
         <div className="comparison-row">
           <span>Me <b>{meScore}</b></span>
-          <span>Partner <b>{partnerScore}</b></span>
+          <span>{partnerLabel} <b>{partnerScore}</b></span>
           <span>Gap <b>{gap}</b></span>
         </div>
       </div>
@@ -528,7 +639,7 @@ const PrincipleCard = ({ principle, coupleScore, meScore, partnerScore }) => {
   )
 }
 
-const Overview = ({ scores, history, setActivePage }) => {
+const Overview = ({ scores, history, partnerLabel = people.partner.label, setActivePage }) => {
   const latestEntries = history.slice(0, 4)
   const trend = getTrendSummary(history)
   const latestEntry = history[0]
@@ -552,7 +663,7 @@ const Overview = ({ scores, history, setActivePage }) => {
             <strong>{scores.me.overallScore}</strong>
           </div>
           <div>
-            <span>Partner</span>
+            <span>{partnerLabel}</span>
             <strong>{scores.partner.overallScore}</strong>
           </div>
           <div>
@@ -578,7 +689,7 @@ const Overview = ({ scores, history, setActivePage }) => {
           <span className="eyebrow">Largest feeling gap</span>
           <h2>{largestGap.title}</h2>
           <p>
-            Me: {largestGap.meScore}/100. Partner: {largestGap.partnerScore}/100.
+            Me: {largestGap.meScore}/100. {partnerLabel}: {largestGap.partnerScore}/100.
             A high gap can mean one person is having a meaningfully different experience.
           </p>
         </article>
@@ -621,6 +732,7 @@ const Overview = ({ scores, history, setActivePage }) => {
             coupleScore={scores.couple.principleScores[principle.id]}
             meScore={scores.me.principleScores[principle.id]}
             partnerScore={scores.partner.principleScores[principle.id]}
+            partnerLabel={partnerLabel}
             key={principle.id}
           />
         ))}
@@ -631,7 +743,7 @@ const Overview = ({ scores, history, setActivePage }) => {
 
 const CheckupsPage = (props) => {
   const [selectedPeriod, setSelectedPeriod] = useState('daily')
-  const { activePerson, responsesByPerson, notesByPerson, canSwitchPerson } = props
+  const { activePerson, responsesByPerson, notesByPerson, history, canSwitchPerson } = props
 
   return (
     <section className="checkups-page">
@@ -648,15 +760,21 @@ const CheckupsPage = (props) => {
 
         <div className="period-tabs" aria-label="Check-up cadence">
           {Object.keys(questionSets).map((period) => (
-            <button
-              className={selectedPeriod === period ? 'active' : ''}
-              type="button"
-              onClick={() => setSelectedPeriod(period)}
-              key={period}
-            >
-              <span>{questionSets[period].eyebrow}</span>
-              {questionSets[period].title.replace(' check-up', '')}
-            </button>
+            (() => {
+              const availability = getPeriodAvailability(period, history, activePerson)
+
+              return (
+                <button
+                  className={`${selectedPeriod === period ? 'active' : ''} ${availability.isSubmitted ? 'locked' : ''}`}
+                  type="button"
+                  onClick={() => setSelectedPeriod(period)}
+                  key={period}
+                >
+                  <span>{availability.isSubmitted ? 'Submitted' : questionSets[period].eyebrow}</span>
+                  {questionSets[period].title.replace(' check-up', '')}
+                </button>
+              )
+            })()
           ))}
         </div>
       </header>
@@ -687,6 +805,7 @@ const SurveyPage = ({
   const person = people[activePerson]
   const periodHistory = history.filter((entry) => entry.period === period && entry.person === activePerson)
   const latestEntry = periodHistory[0]
+  const availability = getPeriodAvailability(period, history, activePerson)
   const periodAverage = Math.round(
     principles.reduce((total, principle) => (
       total + getPeriodPrincipleScore(responses[principle.id])
@@ -700,6 +819,11 @@ const SurveyPage = ({
           <span className="eyebrow">{set.eyebrow}</span>
           <h1>{set.title}</h1>
           <p>{person.label} is filling this in. {set.summary}</p>
+          <small className="checkup-window">
+            {availability.isSubmitted
+              ? `Already submitted for this ${period}. Opens again ${formatDate(availability.end)}.`
+              : `Open now. Submit before ${formatDate(availability.end)}.`}
+          </small>
         </div>
 
         <div className="checkup-side">
@@ -753,8 +877,9 @@ const SurveyPage = ({
       <footer className="survey-actions">
         <div>
           <p>
-            These answers are a draft. Save when {person.label.toLowerCase()} is ready to submit
-            this check-up to the shared Overview and History.
+            {availability.isSubmitted
+              ? `This ${period} check-up has already been submitted for the current window.`
+              : `These answers are a draft. Save when ${person.label.toLowerCase()} is ready to submit this check-up to the shared Overview and History.`}
           </p>
           {latestEntry && (
             <small>
@@ -777,8 +902,8 @@ const SurveyPage = ({
           <button type="button" onClick={() => onReset(period, activePerson)}>
             Reset
           </button>
-          <button type="button" onClick={() => onSave(period, activePerson)}>
-            Save as {person.label}
+          <button type="button" disabled={availability.isSubmitted} onClick={() => onSave(period, activePerson)}>
+            {availability.isSubmitted ? 'Submitted' : `Save as ${person.label}`}
           </button>
         </div>
       </footer>
@@ -859,11 +984,435 @@ const HistoryPage = ({ history, setActivePage }) => {
   )
 }
 
-const AuthPanel = ({ session, onGoogleSignIn, onEmailSignIn, onEmailSignUp, onSignOut }) => {
+const HealthPage = ({
+  checks,
+  checkedAt,
+  couple,
+  hasPartner,
+  isRunning,
+  onRunHealthCheck,
+  requests,
+  session,
+}) => {
+  const summary = checks.reduce(
+    (totals, check) => ({
+      ...totals,
+      [check.status]: (totals[check.status] ?? 0) + 1,
+    }),
+    { pass: 0, warn: 0, fail: 0 },
+  )
+
+  return (
+    <section className="health-page">
+      <header className="health-hero">
+        <div>
+          <span className="eyebrow">System health</span>
+          <h1>Setup Check</h1>
+          <p>
+            Run a quick read-only check against Supabase auth, database tables, the request function,
+            realtime, and your current couple state.
+          </p>
+        </div>
+
+        <div className="health-actions">
+          <button type="button" onClick={onRunHealthCheck} disabled={isRunning}>
+            {isRunning ? 'Checking...' : 'Run checks'}
+          </button>
+          {checkedAt && <small>Last checked {formatDate(checkedAt)}</small>}
+        </div>
+      </header>
+
+      <div className="health-summary-grid">
+        <article className="health-summary-card pass">
+          <strong>{summary.pass}</strong>
+          <span>Passing</span>
+        </article>
+        <article className="health-summary-card warn">
+          <strong>{summary.warn}</strong>
+          <span>Warnings</span>
+        </article>
+        <article className="health-summary-card fail">
+          <strong>{summary.fail}</strong>
+          <span>Needs attention</span>
+        </article>
+      </div>
+
+      <div className="health-context">
+        <span>{session ? `Signed in as ${session.user.email}` : 'Not signed in'}</span>
+        <span>{couple ? `Couple code ${couple.invite_code}` : 'No couple workspace yet'}</span>
+        <span>{hasPartner ? 'Partner connected' : 'Partner not connected'}</span>
+        <span>{requests.length} pending request{requests.length === 1 ? '' : 's'}</span>
+      </div>
+
+      <div className="health-check-list">
+        {checks.map((check) => (
+          <article className={`health-check status-${check.status}`} key={check.id}>
+            <div>
+              <span>{check.label}</span>
+              <strong>{check.title}</strong>
+            </div>
+            <p>{check.detail}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+const ProfilePage = ({ profile, profileExtras = { bio: '', social_links: {} }, session, onSaveProfile }) => {
+  const [displayName, setDisplayName] = useState(profile?.display_name ?? '')
+  const [bio, setBio] = useState(profileExtras.bio ?? '')
+  const [instagram, setInstagram] = useState(profileExtras.social_links?.instagram ?? '')
+  const [x, setX] = useState(profileExtras.social_links?.x ?? '')
+  const [website, setWebsite] = useState(profileExtras.social_links?.website ?? '')
+  const [copied, setCopied] = useState(false)
+
+  const copyId = async () => {
+    try {
+      await navigator.clipboard.writeText(session.user.id)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <section className="profile-page">
+      <header className="profile-hero">
+        <div>
+          <span className="eyebrow">Personal profile</span>
+          <h1>Your Profile</h1>
+          <p>
+            Choose the name your partner sees in check-ups and add optional links that help your account feel like you.
+          </p>
+        </div>
+        <button type="button" onClick={copyId}>{copied ? 'Copied ID' : 'Copy user ID'}</button>
+      </header>
+
+      <form
+        className="profile-form"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onSaveProfile({
+            display_name: displayName.trim(),
+            bio: bio.trim(),
+            social_links: {
+              instagram: instagram.trim(),
+              x: x.trim(),
+              website: website.trim(),
+            },
+          })
+        }}
+      >
+        <label>
+          <span>Display name</span>
+          <input
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="How your partner should see you"
+            required
+          />
+        </label>
+        <label>
+          <span>Short bio</span>
+          <textarea
+            value={bio}
+            onChange={(event) => setBio(event.target.value)}
+            placeholder="Optional note about you"
+            rows="4"
+          />
+        </label>
+        <div className="profile-link-grid">
+          <label>
+            <span>Instagram</span>
+            <input value={instagram} onChange={(event) => setInstagram(event.target.value)} placeholder="@name or URL" />
+          </label>
+          <label>
+            <span>X / Twitter</span>
+            <input value={x} onChange={(event) => setX(event.target.value)} placeholder="@name or URL" />
+          </label>
+          <label>
+            <span>Website</span>
+            <input value={website} onChange={(event) => setWebsite(event.target.value)} placeholder="https://..." />
+          </label>
+        </div>
+        <div className="profile-meta">
+          <span>Email: {session.user.email}</span>
+          <span>User ID: <code>{session.user.id}</code></span>
+        </div>
+        <button type="submit">Save profile</button>
+      </form>
+    </section>
+  )
+}
+
+const OnboardingPage = ({
+  couple,
+  hasPartner,
+  onAcceptRequest,
+  onCancelRequest,
+  onCreateCouple,
+  onFindPartner,
+  onJoinCouple,
+  onRejectRequest,
+  onSendCoupleRequest,
+  onStartCheckup,
+  partnerProfile,
+  profile,
+  requests,
+  session,
+  setActivePage,
+}) => {
+  const [partnerQuery, setPartnerQuery] = useState('')
+  const [foundPartnerProfile, setFoundPartnerProfile] = useState(null)
+  const [inviteCode, setInviteCode] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const incomingCount = requests.filter((request) => request.direction === 'incoming').length
+  const outgoingCount = requests.filter((request) => request.direction === 'outgoing').length
+  const displayName = profile?.display_name || session.user.email
+  const partnerLabel = partnerProfile?.display_name || partnerProfile?.email || people.partner.label
+
+  const copyId = async () => {
+    try {
+      await navigator.clipboard.writeText(session.user.id)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <section className="onboarding-page">
+      <header className="onboarding-hero">
+        <div>
+          <span className="eyebrow">Couple setup</span>
+          <h1>{hasPartner ? `You are connected with ${partnerLabel}.` : 'Connect your partner to unlock check-ups.'}</h1>
+          <p>
+            {hasPartner
+              ? 'Both accounts are linked. You can now submit your own feelings and see your partner\'s submitted check-ups.'
+              : 'Follow these steps once. After your partner accepts, the dashboard unlocks automatically.'}
+          </p>
+        </div>
+        {hasPartner && <button type="button" onClick={onStartCheckup}>Start daily check-up</button>}
+      </header>
+
+      <div className="onboarding-steps">
+        <article className="onboarding-step">
+          <span className="step-number">1</span>
+          <div>
+            <h2>Your identity</h2>
+            <p>You are signed in as <strong>{displayName}</strong>. Your partner can find you by email or user ID.</p>
+            <div className="copy-id-row">
+              <code>{session.user.id}</code>
+              <button type="button" onClick={copyId}>{copied ? 'Copied' : 'Copy ID'}</button>
+            </div>
+            <button className="secondary-button" type="button" onClick={() => setActivePage('profile')}>
+              Edit profile
+            </button>
+          </div>
+        </article>
+
+        <article className="onboarding-step">
+          <span className="step-number">2</span>
+          <div>
+            <h2>Connect with partner</h2>
+            <p>Search by email or ID, then send a request. Your partner accepts it from their account.</p>
+            <div className="onboarding-actions">
+              <label>
+                <span>Partner ID or email</span>
+                <input
+                  value={partnerQuery}
+                  onChange={(event) => {
+                    setPartnerQuery(event.target.value)
+                    setFoundPartnerProfile(null)
+                  }}
+                  placeholder="uuid or email"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={async () => {
+                  const found = await onFindPartner(partnerQuery)
+                  setFoundPartnerProfile(found)
+                }}
+              >
+                Look up
+              </button>
+              {foundPartnerProfile && (
+                <button type="button" onClick={() => onSendCoupleRequest(foundPartnerProfile.id)}>
+                  Send request to {foundPartnerProfile.display_name || foundPartnerProfile.email}
+                </button>
+              )}
+            </div>
+            <div className="request-counts">
+              <span>{incomingCount} incoming</span>
+              <span>{outgoingCount} outgoing</span>
+            </div>
+            <CoupleRequestList
+              requests={requests}
+              onAcceptRequest={onAcceptRequest}
+              onCancelRequest={onCancelRequest}
+              onRejectRequest={onRejectRequest}
+            />
+          </div>
+        </article>
+
+        <article className="onboarding-step">
+          <span className="step-number">3</span>
+          <div>
+            <h2>{hasPartner ? 'Partner connected' : 'Fallback: invite code'}</h2>
+            <p>
+              {hasPartner
+                ? `${partnerLabel} is connected. The relationship dashboard is ready.`
+                : 'Request-based pairing is best, but invite codes are available if searching is inconvenient.'}
+            </p>
+            {!hasPartner && (
+              <div className="onboarding-actions">
+                {!couple && <button type="button" onClick={() => onCreateCouple()}>Create invite code</button>}
+                {couple && <strong className="invite-pill">Your code: {couple.invite_code}</strong>}
+                <label>
+                  <span>Invite code</span>
+                  <input
+                    value={inviteCode}
+                    onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+                    placeholder="AB12CD34"
+                  />
+                </label>
+                <button type="button" onClick={() => onJoinCouple(inviteCode)}>Join by code</button>
+              </div>
+            )}
+            {hasPartner && <button type="button" onClick={onStartCheckup}>Open check-ups</button>}
+          </div>
+        </article>
+      </div>
+    </section>
+  )
+}
+
+const AuthForm = ({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, message, landing = false }) => {
   const [authMode, setAuthMode] = useState('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
+  const submitLabel = authMode === 'sign-in' ? 'Log in' : 'Sign up'
+  const toggleLabel = authMode === 'sign-in' ? 'Need an account?' : 'Already registered?'
+
+  return (
+    <form
+      className={landing ? 'auth-form landing-auth-form' : 'auth-form'}
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (!email.trim()) {
+          return
+        }
+
+        if (authMode === 'sign-in') {
+          onEmailSignIn(email, password)
+        } else {
+          onEmailSignUp(email, password)
+        }
+      }}
+    >
+      <div className="auth-mode-tabs" aria-label="Authentication mode">
+        <button
+          className={authMode === 'sign-in' ? 'active' : ''}
+          type="button"
+          onClick={() => setAuthMode('sign-in')}
+        >
+          Log In
+        </button>
+        <button
+          className={authMode === 'register' ? 'active' : ''}
+          type="button"
+          onClick={() => setAuthMode('register')}
+        >
+          Sign Up
+        </button>
+      </div>
+      <label>
+        <span>Email</span>
+        <input
+          autoComplete="email"
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="email@example.com"
+          required
+          type="email"
+          value={email}
+        />
+      </label>
+      <label>
+        <span>Password</span>
+        <input
+          autoComplete={authMode === 'sign-in' ? 'current-password' : 'new-password'}
+          minLength="6"
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="Password"
+          required
+          type="password"
+          value={password}
+        />
+      </label>
+      {message && <p className="auth-error">{message}</p>}
+      <button type="submit">{submitLabel}</button>
+      <button
+        className="secondary-button"
+        type="button"
+        onClick={() => setAuthMode(authMode === 'sign-in' ? 'register' : 'sign-in')}
+      >
+        {toggleLabel}
+      </button>
+      <button className="secondary-button" type="button" onClick={onGoogleSignIn}>
+        Continue with Google
+      </button>
+    </form>
+  )
+}
+
+const AuthLanding = ({ message, onGoogleSignIn, onEmailSignIn, onEmailSignUp }) => (
+  <main className="auth-landing-page">
+    <section className="auth-landing-shell">
+      <div className="auth-landing-copy">
+        <span className="eyebrow">Purrfect Relationship Dashboard</span>
+        <h1>Track feelings together, not from one side of the story.</h1>
+        <p>
+          Share daily, weekly, and monthly check-ups with your partner. Each person submits their own feelings,
+          then both of you can see patterns across recognition, acceptance, safety, intimacy, stability, and initiative.
+        </p>
+        <div className="auth-feature-grid">
+          <article>
+            <strong>Private couple space</strong>
+            <span>Connect by request before any check-ups unlock.</span>
+          </article>
+          <article>
+            <strong>Weighted check-ins</strong>
+            <span>Daily, weekly, and monthly answers shape the relationship score.</span>
+          </article>
+          <article>
+            <strong>Shared history</strong>
+            <span>See your partner's submitted feelings alongside your own.</span>
+          </article>
+        </div>
+      </div>
+
+      <section className="auth-landing-card" aria-label="Authentication">
+        <span className="eyebrow">Start here</span>
+        <h2>Log In or Sign Up</h2>
+        <AuthForm
+          landing
+          message={message}
+          onGoogleSignIn={onGoogleSignIn}
+          onEmailSignIn={onEmailSignIn}
+          onEmailSignUp={onEmailSignUp}
+        />
+      </section>
+    </section>
+  </main>
+)
+
+const AuthPanel = ({ session, onSignOut }) => {
   if (!isSupabaseConfigured) {
     return (
       <section className="auth-panel">
@@ -872,56 +1421,6 @@ const AuthPanel = ({ session, onGoogleSignIn, onEmailSignIn, onEmailSignUp, onSi
           <h2>Connect Supabase to enable real couple sharing.</h2>
           <p>Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, then run the SQL in `supabase-schema.sql`.</p>
         </div>
-      </section>
-    )
-  }
-
-  if (!session) {
-    return (
-      <section className="auth-panel">
-        <div>
-          <span className="eyebrow">Private sharing</span>
-          <h2>{authMode === 'sign-in' ? 'Sign in to sync with your partner.' : 'Create your account.'}</h2>
-          <p>Register or sign in. Your drafts stay local; submitted check-ups sync in your couple workspace.</p>
-        </div>
-        <form
-          className="auth-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (authMode === 'sign-in') {
-              onEmailSignIn(email, password)
-            } else {
-              onEmailSignUp(email, password)
-            }
-          }}
-        >
-          <input
-            autoComplete="email"
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="email@example.com"
-            type="email"
-            value={email}
-          />
-          <input
-            autoComplete={authMode === 'sign-in' ? 'current-password' : 'new-password'}
-            minLength="6"
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder="Password"
-            type="password"
-            value={password}
-          />
-          <button type="submit">{authMode === 'sign-in' ? 'Sign in' : 'Register'}</button>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => setAuthMode(authMode === 'sign-in' ? 'register' : 'sign-in')}
-          >
-            {authMode === 'sign-in' ? 'Need an account?' : 'Already registered?'}
-          </button>
-          <button className="secondary-button" type="button" onClick={onGoogleSignIn}>
-            Continue with Google
-          </button>
-        </form>
       </section>
     )
   }
@@ -938,76 +1437,102 @@ const AuthPanel = ({ session, onGoogleSignIn, onEmailSignIn, onEmailSignUp, onSi
   )
 }
 
-const SetupGate = ({ session, couple, hasPartner }) => {
-  let title = 'Sign in before using the relationship dashboard.'
-  let detail = 'Check-ups and scores only become useful when they belong to real accounts.'
+const CoupleRequestList = ({ requests, onAcceptRequest, onCancelRequest, onRejectRequest }) => {
+  const incoming = requests.filter((request) => request.direction === 'incoming')
+  const outgoing = requests.filter((request) => request.direction === 'outgoing')
 
-  if (session && !couple) {
-    title = 'Create or join a couple workspace.'
-    detail = 'Once both people are connected, you can submit your own check-ups and view your partner\'s feelings.'
-  } else if (session && couple && !hasPartner) {
-    title = 'Waiting for your partner.'
-    detail = 'Share the invite code or look them up by ID/email. The dashboard unlocks when the couple has both members.'
+  if (requests.length === 0) {
+    return (
+      <div className="request-empty">
+        No pending requests yet.
+      </div>
+    )
   }
 
   return (
-    <section className="setup-gate">
-      <span className="eyebrow">Setup required</span>
-      <h1>{title}</h1>
-      <p>{detail}</p>
-    </section>
+    <div className="request-list">
+      {incoming.map((request) => (
+        <article className="request-card" key={request.id}>
+          <div>
+            <strong>{request.otherProfile.display_name || request.otherProfile.email}</strong>
+            <span>wants to connect with you. Sent {formatDate(request.created_at)}.</span>
+          </div>
+          <div className="request-actions">
+            <button type="button" onClick={() => onAcceptRequest(request.id)}>Accept</button>
+            <button className="secondary-button" type="button" onClick={() => onRejectRequest(request.id)}>Reject</button>
+          </div>
+        </article>
+      ))}
+
+      {outgoing.map((request) => (
+        <article className="request-card" key={request.id}>
+          <div>
+            <strong>{request.otherProfile.display_name || request.otherProfile.email}</strong>
+            <span>has not answered yet. Sent {formatDate(request.created_at)}.</span>
+          </div>
+          <div className="request-actions">
+            <button className="secondary-button" type="button" onClick={() => onCancelRequest(request.id)}>Cancel</button>
+          </div>
+        </article>
+      ))}
+    </div>
   )
 }
 
-const CouplePanel = ({ session, couple, hasPartner, onAddPartner, onCreateCouple, onFindPartner, onJoinCouple }) => {
+const CouplePanel = ({
+  session,
+  couple,
+  hasPartner,
+  partnerProfile,
+  requests,
+  onAcceptRequest,
+  onCancelRequest,
+  onCreateCouple,
+  onFindPartner,
+  onJoinCouple,
+  onRejectRequest,
+  onSendCoupleRequest,
+}) => {
   const [inviteCode, setInviteCode] = useState('')
   const [partnerQuery, setPartnerQuery] = useState('')
-  const [partnerProfile, setPartnerProfile] = useState(null)
+  const [foundPartnerProfile, setFoundPartnerProfile] = useState(null)
 
   if (!isSupabaseConfigured || !session) {
     return null
   }
 
   if (couple) {
+    const partnerLabel = partnerProfile?.display_name || partnerProfile?.email || people.partner.label
+
     return (
       <section className="couple-panel">
         <div>
-          <span className="eyebrow">Couple workspace</span>
-          <h2>Invite code: {couple.invite_code}</h2>
+          <span className="eyebrow">{hasPartner ? 'Connected couple' : 'Couple workspace'}</span>
+          <h2>{hasPartner ? `Connected with ${partnerLabel}` : `Invite code: ${couple.invite_code}`}</h2>
           <p>
             {hasPartner
-              ? 'Connected. You submit your feelings as yourself, and your partner submits theirs from their account.'
+              ? `Live updates are on. You submit as yourself, and ${partnerLabel} submits from their account.`
               : 'Add your partner before check-ups unlock. They can join by code, or you can look them up after they register.'}
           </p>
         </div>
+        {hasPartner && (
+          <div className="partner-status">
+            <span>Partner</span>
+            <strong>{partnerLabel}</strong>
+            <small>Invite code {couple.invite_code}</small>
+          </div>
+        )}
         {!hasPartner && (
           <div className="couple-actions">
             <label>
-              <span>Partner ID or email</span>
+              <span>Invite code</span>
               <input
-                className="wide-input"
-                value={partnerQuery}
-                onChange={(event) => {
-                  setPartnerQuery(event.target.value)
-                  setPartnerProfile(null)
-                }}
-                placeholder="uuid or email"
+                value={inviteCode}
+                onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+                placeholder="AB12CD34"
               />
             </label>
-            <button
-              type="button"
-              onClick={async () => {
-                const profile = await onFindPartner(partnerQuery)
-                setPartnerProfile(profile)
-              }}
-            >
-              Look up
-            </button>
-            {partnerProfile && (
-              <button type="button" onClick={() => onAddPartner(partnerProfile.id)}>
-                Add {partnerProfile.display_name || partnerProfile.email}
-              </button>
-            )}
+            <button type="button" onClick={() => onJoinCouple(inviteCode)}>Join</button>
           </div>
         )}
       </section>
@@ -1018,36 +1543,39 @@ const CouplePanel = ({ session, couple, hasPartner, onAddPartner, onCreateCouple
     <section className="couple-panel">
       <div>
         <span className="eyebrow">Couple workspace</span>
-        <h2>Find your partner or join by code.</h2>
-        <p>Search by their user ID or email after they register, then create a shared couple workspace.</p>
+        <h2>Send a couple request or join by code.</h2>
+        <p>Search by your partner's user ID or email after they register. They will accept or reject the request from their account.</p>
       </div>
       <div className="couple-actions">
         <label>
           <span>Partner ID or email</span>
           <input
-            className="wide-input"
-            value={partnerQuery}
-            onChange={(event) => {
-              setPartnerQuery(event.target.value)
-              setPartnerProfile(null)
-            }}
-            placeholder="uuid or email"
-          />
+              className="wide-input"
+              value={partnerQuery}
+              onChange={(event) => {
+                setPartnerQuery(event.target.value)
+                setFoundPartnerProfile(null)
+              }}
+              placeholder="uuid or email"
+            />
         </label>
         <button
           type="button"
           onClick={async () => {
             const profile = await onFindPartner(partnerQuery)
-            setPartnerProfile(profile)
+            setFoundPartnerProfile(profile)
           }}
         >
           Look up
         </button>
-        {partnerProfile && (
-          <button type="button" onClick={() => onCreateCouple(partnerProfile.id)}>
-            Create with {partnerProfile.display_name || partnerProfile.email}
+        {foundPartnerProfile && (
+          <button type="button" onClick={() => onSendCoupleRequest(foundPartnerProfile.id)}>
+            Send request to {foundPartnerProfile.display_name || foundPartnerProfile.email}
           </button>
         )}
+        <button type="button" onClick={() => onCreateCouple()}>
+          Create invite code
+        </button>
         <label>
           <span>Invite code</span>
           <input
@@ -1058,6 +1586,12 @@ const CouplePanel = ({ session, couple, hasPartner, onAddPartner, onCreateCouple
         </label>
         <button type="button" onClick={() => onJoinCouple(inviteCode)}>Join</button>
       </div>
+      <CoupleRequestList
+        requests={requests}
+        onAcceptRequest={onAcceptRequest}
+        onCancelRequest={onCancelRequest}
+        onRejectRequest={onRejectRequest}
+      />
     </section>
   )
 }
@@ -1070,14 +1604,172 @@ function App() {
   const [notes, setNotes] = useState(savedState.notes)
   const [history, setHistory] = useState(savedState.history)
   const [session, setSession] = useState(null)
+  const [profile, setProfile] = useState(null)
+  const [profileExtras, setProfileExtras] = useState({ bio: '', social_links: {} })
   const [couple, setCouple] = useState(null)
   const [coupleMembers, setCoupleMembers] = useState([])
+  const [coupleMemberProfiles, setCoupleMemberProfiles] = useState({})
+  const [coupleRequests, setCoupleRequests] = useState([])
+  const [healthChecks, setHealthChecks] = useState([
+    {
+      id: 'start',
+      label: 'Ready',
+      title: 'Health checks have not run yet.',
+      detail: 'Run checks to inspect Supabase setup, auth, requests, realtime, and couple readiness.',
+      status: 'warn',
+    },
+  ])
+  const [healthCheckedAt, setHealthCheckedAt] = useState(null)
+  const [isHealthRunning, setIsHealthRunning] = useState(false)
   const [statusMessage, setStatusMessage] = useState('')
 
   const scores = useMemo(() => calculateSubmittedCoupleScores(history), [history])
   const hasPartner = coupleMembers.length >= 2
+  const partnerProfile = useMemo(() => (
+    Object.values(coupleMemberProfiles).find((profile) => profile.id !== session?.user.id) ?? null
+  ), [coupleMemberProfiles, session])
+  const partnerLabel = partnerProfile?.display_name || partnerProfile?.email || people.partner.label
   const isRemoteReady = isSupabaseConfigured && session && couple && hasPartner
   const shouldGateRemoteApp = isSupabaseConfigured && (!session || !couple || !hasPartner)
+
+  const runHealthCheck = async () => {
+    setIsHealthRunning(true)
+    setStatusMessage('')
+
+    const nextChecks = []
+    const addCheck = (id, status, title, detail, label = status.toUpperCase()) => {
+      nextChecks.push({ id, status, title, detail, label })
+      setHealthChecks([...nextChecks])
+    }
+
+    try {
+      addCheck(
+        'supabase-config',
+        isSupabaseConfigured ? 'pass' : 'fail',
+        isSupabaseConfigured ? 'Supabase environment is configured.' : 'Supabase environment is missing.',
+        isSupabaseConfigured
+          ? 'The app has a Supabase URL and anon key.'
+          : 'Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local.',
+      )
+
+      if (!isSupabaseConfigured) {
+        return
+      }
+
+      addCheck(
+        'auth-session',
+        session ? 'pass' : 'fail',
+        session ? 'User session is active.' : 'No authenticated session.',
+        session ? `Signed in as ${session.user.email}.` : 'Log in before testing protected database access.',
+      )
+
+      if (!session) {
+        return
+      }
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('id', session.user.id)
+        .maybeSingle()
+
+      addCheck(
+        'profile',
+        profileError ? 'fail' : 'pass',
+        profileError ? 'Profile query failed.' : 'Profile access works.',
+        profileError ? getFriendlyError(profileError, 'Could not read your profile.') : 'The profiles table and RLS policy are reachable.',
+      )
+
+      const { error: requestTableError } = await supabase
+        .from('couple_requests')
+        .select('id')
+        .limit(1)
+
+      addCheck(
+        'couple-requests-table',
+        requestTableError ? 'fail' : 'pass',
+        requestTableError ? 'Couple requests table is not reachable.' : 'Couple requests table is reachable.',
+        requestTableError
+          ? getFriendlyError(requestTableError, 'Could not read couple requests.')
+          : 'The couple_requests table exists in the API schema and its select policy allows your account to query pending requests.',
+      )
+
+      const { error: functionError } = await supabase.rpc('accept_couple_request', {
+        target_request_id: crypto.randomUUID(),
+      })
+      const functionExists = !functionError || !(
+        functionError.message?.includes('Could not find the function')
+        || functionError.message?.includes('schema cache')
+      )
+
+      addCheck(
+        'accept-function',
+        functionExists ? 'pass' : 'fail',
+        functionExists ? 'Accept request function is installed.' : 'Accept request function is missing.',
+        functionExists
+          ? 'The test call reached the function. A "request not found" response is expected for this harmless fake ID.'
+          : getFriendlyError(functionError, 'Run the latest supabase-schema.sql to install accept_couple_request.'),
+      )
+
+      const realtimeResult = await new Promise((resolve) => {
+        const channel = supabase.channel(`health-check-${session.user.id}-${Date.now()}`)
+        const timer = window.setTimeout(() => {
+          supabase.removeChannel(channel)
+          resolve(false)
+        }, 3500)
+
+        channel.subscribe((status) => {
+          if (status === 'SUBSCRIBED') {
+            window.clearTimeout(timer)
+            supabase.removeChannel(channel)
+            resolve(true)
+          }
+        })
+      })
+
+      addCheck(
+        'realtime',
+        realtimeResult ? 'pass' : 'warn',
+        realtimeResult ? 'Realtime connection is available.' : 'Realtime did not confirm a subscription quickly.',
+        realtimeResult
+          ? 'The client can connect to Supabase Realtime. Table events still require the latest schema publication changes.'
+          : 'Run the latest schema and check that Realtime is enabled in your Supabase project.',
+      )
+
+      addCheck(
+        'couple-state',
+        couple ? 'pass' : 'warn',
+        couple ? 'Couple workspace found.' : 'No couple workspace yet.',
+        couple ? `Current invite code is ${couple.invite_code}.` : 'Send a request, accept a request, or join by invite code.',
+      )
+
+      addCheck(
+        'partner-state',
+        hasPartner ? 'pass' : 'warn',
+        hasPartner ? 'Partner is connected.' : 'Partner is not connected yet.',
+        hasPartner ? `Connected with ${partnerLabel}.` : 'The dashboard will stay locked until the couple has both members.',
+      )
+
+      addCheck(
+        'submit-readiness',
+        isRemoteReady ? 'pass' : 'warn',
+        isRemoteReady ? 'Check-up submission is ready.' : 'Check-up submission is not ready yet.',
+        isRemoteReady
+          ? 'The app has a signed-in user, couple workspace, and partner membership.'
+          : 'Complete partner setup before submitting check-ups.',
+      )
+    } catch (error) {
+      addCheck(
+        'unexpected-error',
+        'fail',
+        'Health check stopped early.',
+        getFriendlyError(error, 'An unexpected health check error occurred.'),
+      )
+    } finally {
+      setHealthCheckedAt(new Date().toISOString())
+      setIsHealthRunning(false)
+    }
+  }
 
   useEffect(() => {
     try {
@@ -1099,8 +1791,12 @@ function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
       if (!nextSession) {
+        setProfile(null)
+        setProfileExtras({ bio: '', social_links: {} })
         setCouple(null)
         setCoupleMembers([])
+        setCoupleMemberProfiles({})
+        setCoupleRequests([])
         setHistory([])
       }
     })
@@ -1114,17 +1810,35 @@ function App() {
     }
 
     const { user } = currentSession
+    const { data: existingProfile, error: existingError } = await supabase
+      .from('profiles')
+      .select('id, email, display_name, avatar_url')
+      .eq('id', user.id)
+      .maybeSingle()
+
+    if (existingError) {
+      throw existingError
+    }
+
     const profile = {
       id: user.id,
       email: user.email,
-      display_name: user.user_metadata?.full_name ?? user.email,
-      avatar_url: user.user_metadata?.avatar_url ?? null,
+      display_name: existingProfile?.display_name ?? user.user_metadata?.full_name ?? user.email,
+      avatar_url: existingProfile?.avatar_url ?? user.user_metadata?.avatar_url ?? null,
     }
 
-    const { error } = await supabase.from('profiles').upsert(profile)
+    const { data, error } = await supabase.from('profiles').upsert(profile).select().single()
 
     if (error) {
       throw error
+    }
+
+    setProfile(data)
+
+    try {
+      setProfileExtras(JSON.parse(window.localStorage.getItem(getProfileExtrasKey(user.id))) ?? { bio: '', social_links: {} })
+    } catch {
+      setProfileExtras({ bio: '', social_links: {} })
     }
   }
 
@@ -1137,27 +1851,42 @@ function App() {
 
     const { data: memberships, error: membershipError } = await supabase
       .from('couple_members')
-      .select('couple_id')
+      .select('couple_id, created_at')
       .eq('user_id', currentSession.user.id)
-      .limit(1)
+      .order('created_at', { ascending: false })
 
     if (membershipError) {
       throw membershipError
     }
 
-    const membership = memberships?.[0]
-
-    if (!membership) {
+    if (!memberships?.length) {
       setCouple(null)
       setCoupleMembers([])
+      setCoupleMemberProfiles({})
       setHistory([])
       return
     }
 
+    const coupleIds = memberships.map((membership) => membership.couple_id)
+    const { data: allMemberRows, error: allMembersError } = await supabase
+      .from('couple_members')
+      .select('couple_id, user_id')
+      .in('couple_id', coupleIds)
+
+    if (allMembersError) {
+      throw allMembersError
+    }
+
+    const memberCounts = allMemberRows.reduce((counts, member) => ({
+      ...counts,
+      [member.couple_id]: (counts[member.couple_id] ?? 0) + 1,
+    }), {})
+    const preferredMembership = memberships.find((membership) => memberCounts[membership.couple_id] >= 2) ?? memberships[0]
+
     const { data: coupleRow, error: coupleError } = await supabase
       .from('couples')
       .select('id, invite_code')
-      .eq('id', membership.couple_id)
+      .eq('id', preferredMembership.couple_id)
       .single()
 
     if (coupleError) {
@@ -1165,6 +1894,54 @@ function App() {
     }
 
     setCouple(coupleRow)
+  }
+
+  const loadCoupleRequests = async (currentSession = session) => {
+    if (!isSupabaseConfigured || !currentSession) {
+      return
+    }
+
+    const { data: requests, error: requestError } = await supabase
+      .from('couple_requests')
+      .select('id, requester_id, recipient_id, status, created_at')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false })
+
+    if (requestError) {
+      throw requestError
+    }
+
+    const otherIds = requests.map((request) => (
+      request.requester_id === currentSession.user.id ? request.recipient_id : request.requester_id
+    ))
+
+    let profiles = []
+
+    if (otherIds.length > 0) {
+      const { data: profileRows, error: profileError } = await supabase
+        .from('profiles')
+        .select('id, email, display_name')
+        .in('id', otherIds)
+
+      if (profileError) {
+        throw profileError
+      }
+
+      profiles = profileRows
+    }
+
+    const profileById = Object.fromEntries(profiles.map((profile) => [profile.id, profile]))
+
+    setCoupleRequests(requests.map((request) => {
+      const isIncoming = request.recipient_id === currentSession.user.id
+      const otherId = isIncoming ? request.requester_id : request.recipient_id
+
+      return {
+        ...request,
+        direction: isIncoming ? 'incoming' : 'outgoing',
+        otherProfile: profileById[otherId] ?? { id: otherId, display_name: 'Your partner', email: otherId },
+      }
+    }))
   }
 
   const loadRemoteHistory = async (currentCouple = couple, currentSession = session) => {
@@ -1181,17 +1958,24 @@ function App() {
       throw membersError
     }
 
-    setCoupleMembers(memberRows)
-
     const memberIds = memberRows.map((member) => member.user_id)
-    const { data: profiles, error: profilesError } = await supabase
-      .from('profiles')
-      .select('id, email, display_name')
-      .in('id', memberIds)
+    let profiles = []
 
-    if (profilesError) {
-      throw profilesError
+    if (memberIds.length > 0) {
+      const { data: profileRows, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, email, display_name')
+        .in('id', memberIds)
+
+      if (profilesError) {
+        throw profilesError
+      }
+
+      profiles = profileRows
     }
+
+    setCoupleMembers(memberRows)
+    setCoupleMemberProfiles(Object.fromEntries(profiles.map((profile) => [profile.id, profile])))
 
     const labels = Object.fromEntries(
       profiles.map((profile) => [
@@ -1219,7 +2003,10 @@ function App() {
 
     const timer = window.setTimeout(() => {
       loadCouple(session).catch((error) => {
-        setStatusMessage(error.message)
+        setStatusMessage(getFriendlyError(error, 'Could not load your couple workspace.'))
+      })
+      loadCoupleRequests(session).catch((error) => {
+        setStatusMessage(getFriendlyError(error, 'Could not load your couple requests.'))
       })
     }, 0)
 
@@ -1234,11 +2021,121 @@ function App() {
 
     const timer = window.setTimeout(() => {
       loadRemoteHistory(couple, session).catch((error) => {
-        setStatusMessage(error.message)
+        setStatusMessage(getFriendlyError(error, 'Could not load your shared check-up history.'))
       })
     }, 0)
 
     return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [couple, session])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session) {
+      return undefined
+    }
+
+    const refreshRelationshipState = () => {
+      loadCouple(session).catch((error) => {
+        setStatusMessage(getFriendlyError(error, 'Could not refresh your couple workspace.'))
+      })
+      loadCoupleRequests(session).catch((error) => {
+        setStatusMessage(getFriendlyError(error, 'Could not refresh your couple requests.'))
+      })
+    }
+
+    const incomingRequestsChannel = supabase
+      .channel(`incoming-couple-requests-${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'couple_requests',
+          filter: `recipient_id=eq.${session.user.id}`,
+        },
+        refreshRelationshipState,
+      )
+      .subscribe()
+
+    const outgoingRequestsChannel = supabase
+      .channel(`outgoing-couple-requests-${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'couple_requests',
+          filter: `requester_id=eq.${session.user.id}`,
+        },
+        refreshRelationshipState,
+      )
+      .subscribe()
+
+    const membershipsChannel = supabase
+      .channel(`couple-memberships-${session.user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'couple_members',
+          filter: `user_id=eq.${session.user.id}`,
+        },
+        refreshRelationshipState,
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(incomingRequestsChannel)
+      supabase.removeChannel(outgoingRequestsChannel)
+      supabase.removeChannel(membershipsChannel)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session || !couple) {
+      return undefined
+    }
+
+    const refreshCoupleData = () => {
+      loadRemoteHistory(couple, session).catch((error) => {
+        setStatusMessage(getFriendlyError(error, 'Could not refresh your shared dashboard.'))
+      })
+    }
+
+    const coupleMembersChannel = supabase
+      .channel(`couple-member-list-${couple.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'couple_members',
+          filter: `couple_id=eq.${couple.id}`,
+        },
+        refreshCoupleData,
+      )
+      .subscribe()
+
+    const submissionsChannel = supabase
+      .channel(`couple-submissions-${couple.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'checkup_submissions',
+          filter: `couple_id=eq.${couple.id}`,
+        },
+        refreshCoupleData,
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(coupleMembersChannel)
+      supabase.removeChannel(submissionsChannel)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [couple, session])
 
@@ -1252,7 +2149,7 @@ function App() {
     })
 
     if (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not start Google sign-in.'))
     }
   }
 
@@ -1261,7 +2158,7 @@ function App() {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not sign you in.'))
     }
   }
 
@@ -1270,7 +2167,7 @@ function App() {
     const { data, error } = await supabase.auth.signUp({ email, password })
 
     if (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not create your account.'))
       return
     }
 
@@ -1287,7 +2184,43 @@ function App() {
     const { error } = await supabase.auth.signOut()
 
     if (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not sign you out.'))
+    }
+  }
+
+  const handleSaveProfile = async (nextProfile) => {
+    try {
+      setStatusMessage('')
+
+      const payload = {
+        display_name: nextProfile.display_name || session.user.email,
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(payload)
+        .eq('id', session.user.id)
+        .select()
+        .single()
+
+      if (error) {
+        throw error
+      }
+
+      setProfile(data)
+      const extras = {
+        bio: nextProfile.bio,
+        social_links: nextProfile.social_links,
+      }
+      window.localStorage.setItem(getProfileExtrasKey(session.user.id), JSON.stringify(extras))
+      setProfileExtras(extras)
+      setCoupleMemberProfiles((current) => ({
+        ...current,
+        [data.id]: data,
+      }))
+      setStatusMessage('Profile saved.')
+    } catch (error) {
+      setStatusMessage(getFriendlyError(error, 'Could not save your profile.'))
     }
   }
 
@@ -1329,12 +2262,12 @@ function App() {
       setStatusMessage(`Found ${profile.display_name || profile.email}.`)
       return profile
     } catch (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not find that account.'))
       return null
     }
   }
 
-  const handleCreateCouple = async (partnerId = null) => {
+  const handleCreateCouple = async () => {
     try {
       setStatusMessage('')
       await upsertProfile(session)
@@ -1361,56 +2294,94 @@ function App() {
         throw memberError
       }
 
-      if (partnerId) {
-        const { error: partnerMemberError } = await supabase.from('couple_members').insert({
-          couple_id: newCouple.id,
-          user_id: partnerId,
-          role: 'partner',
-        })
-
-        if (partnerMemberError) {
-          throw partnerMemberError
-        }
-      }
-
       setCouple({ id: newCouple.id, invite_code: newCouple.invite_code })
       setCoupleMembers([
         { user_id: session.user.id },
-        ...(partnerId ? [{ user_id: partnerId }] : []),
       ])
-      setStatusMessage(partnerId ? 'Couple created with your partner.' : 'Couple created. Share the invite code with your partner.')
+      setStatusMessage('Invite code created. Share it with your partner to connect.')
     } catch (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not create the couple workspace.'))
     }
   }
 
-  const handleAddPartner = async (partnerId) => {
+  const handleSendCoupleRequest = async (partnerId) => {
     try {
       setStatusMessage('')
+      await upsertProfile(session)
 
-      if (!couple) {
-        setStatusMessage('Create a couple workspace first.')
+      if (!partnerId) {
+        setStatusMessage('Look up your partner before sending a request.')
         return
       }
 
-      const { error } = await supabase.from('couple_members').insert({
-        couple_id: couple.id,
-        user_id: partnerId,
-        role: 'partner',
+      const { error } = await supabase.from('couple_requests').insert({
+        requester_id: session.user.id,
+        recipient_id: partnerId,
       })
 
       if (error) {
         throw error
       }
 
-      setCoupleMembers((current) => [
-        ...current.filter((member) => member.user_id !== partnerId),
-        { user_id: partnerId },
-      ])
-      await loadRemoteHistory(couple, session)
-      setStatusMessage('Partner added. Your shared check-ups are ready.')
+      await loadCoupleRequests(session)
+      setStatusMessage('Couple request sent. Your partner can accept it from their account.')
     } catch (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not send the couple request.'))
+    }
+  }
+
+  const handleAcceptRequest = async (requestId) => {
+    try {
+      setStatusMessage('')
+      const { error } = await supabase.rpc('accept_couple_request', {
+        target_request_id: requestId,
+      })
+
+      if (error) {
+        throw error
+      }
+
+      await loadCouple(session)
+      await loadCoupleRequests(session)
+      setStatusMessage('Couple request accepted. Your shared dashboard is ready.')
+    } catch (error) {
+      setStatusMessage(getFriendlyError(error, 'Could not accept the couple request.'))
+    }
+  }
+
+  const updateCoupleRequestStatus = async (requestId, status) => {
+    const { error } = await supabase
+      .from('couple_requests')
+      .update({
+        status,
+        responded_at: new Date().toISOString(),
+      })
+      .eq('id', requestId)
+
+    if (error) {
+      throw error
+    }
+  }
+
+  const handleRejectRequest = async (requestId) => {
+    try {
+      setStatusMessage('')
+      await updateCoupleRequestStatus(requestId, 'rejected')
+      await loadCoupleRequests(session)
+      setStatusMessage('Couple request rejected.')
+    } catch (error) {
+      setStatusMessage(getFriendlyError(error, 'Could not reject the couple request.'))
+    }
+  }
+
+  const handleCancelRequest = async (requestId) => {
+    try {
+      setStatusMessage('')
+      await updateCoupleRequestStatus(requestId, 'cancelled')
+      await loadCoupleRequests(session)
+      setStatusMessage('Couple request cancelled.')
+    } catch (error) {
+      setStatusMessage(getFriendlyError(error, 'Could not cancel the couple request.'))
     }
   }
 
@@ -1443,7 +2414,7 @@ function App() {
         return
       }
 
-      const { error: memberError } = await supabase.from('couple_members').upsert({
+      const { error: memberError } = await supabase.from('couple_members').insert({
         couple_id: coupleRow.id,
         user_id: session.user.id,
         role: 'partner',
@@ -1456,7 +2427,7 @@ function App() {
       setCouple(coupleRow)
       setStatusMessage('Joined couple workspace.')
     } catch (error) {
-      setStatusMessage(error.message)
+      setStatusMessage(getFriendlyError(error, 'Could not join that couple workspace.'))
     }
   }
 
@@ -1486,6 +2457,14 @@ function App() {
   }
 
   const handleSave = async (period, person) => {
+    const availability = getPeriodAvailability(period, history, person)
+
+    if (availability.isSubmitted) {
+      setStatusMessage(`You already submitted the ${period} check-up for this window.`)
+      return
+    }
+
+    const periodWindow = getPeriodWindow(period).windowKey
     const periodScores = getPeriodScores(period, responses[person][period])
     const nextEntry = {
       ...periodScores,
@@ -1494,6 +2473,7 @@ function App() {
       id: `${person}-${period}-${Date.now()}`,
       createdAt: new Date().toISOString(),
       note: notes[person][period].trim(),
+      periodWindow,
       responses: responses[person][period],
     }
 
@@ -1510,6 +2490,7 @@ function App() {
           couple_id: couple.id,
           user_id: session.user.id,
           period,
+          period_window: periodWindow,
           note: nextEntry.note,
           responses: nextEntry.responses,
           principle_scores: nextEntry.principleScores,
@@ -1524,7 +2505,7 @@ function App() {
         setStatusMessage('Submitted to your couple workspace.')
         return
       } catch (error) {
-        setStatusMessage(error.message)
+        setStatusMessage(getFriendlyError(error, 'Could not submit this check-up.'))
         return
       }
     }
@@ -1551,6 +2532,17 @@ function App() {
         [period]: '',
       },
     }))
+  }
+
+  if (isSupabaseConfigured && !session) {
+    return (
+      <AuthLanding
+        message={statusMessage}
+        onGoogleSignIn={handleSignIn}
+        onEmailSignIn={handleEmailSignIn}
+        onEmailSignUp={handleEmailSignUp}
+      />
+    )
   }
 
   return (
@@ -1596,30 +2588,70 @@ function App() {
 
         <AuthPanel
           session={session}
-          onGoogleSignIn={handleSignIn}
-          onEmailSignIn={handleEmailSignIn}
-          onEmailSignUp={handleEmailSignUp}
           onSignOut={handleSignOut}
         />
 
-        <CouplePanel
-          session={session}
-          couple={couple}
-          hasPartner={hasPartner}
-          onAddPartner={handleAddPartner}
-          onCreateCouple={handleCreateCouple}
-          onFindPartner={handleFindPartner}
-          onJoinCouple={handleJoinCouple}
-        />
+        {!shouldGateRemoteApp && (
+          <CouplePanel
+            session={session}
+            couple={couple}
+            hasPartner={hasPartner}
+            partnerProfile={partnerProfile}
+            requests={coupleRequests}
+            onAcceptRequest={handleAcceptRequest}
+            onCancelRequest={handleCancelRequest}
+            onCreateCouple={handleCreateCouple}
+            onFindPartner={handleFindPartner}
+            onJoinCouple={handleJoinCouple}
+            onRejectRequest={handleRejectRequest}
+            onSendCoupleRequest={handleSendCoupleRequest}
+          />
+        )}
 
         {statusMessage && <p className="status-message">{statusMessage}</p>}
 
-        {shouldGateRemoteApp ? (
-          <SetupGate session={session} couple={couple} hasPartner={hasPartner} />
+        {activePage === 'health' ? (
+          <HealthPage
+            checks={healthChecks}
+            checkedAt={healthCheckedAt}
+            couple={couple}
+            hasPartner={hasPartner}
+            isRunning={isHealthRunning}
+            onRunHealthCheck={runHealthCheck}
+            requests={coupleRequests}
+            session={session}
+          />
+        ) : activePage === 'profile' ? (
+          <ProfilePage
+            key={profile?.id ?? 'profile-loading'}
+            profile={profile}
+            profileExtras={profileExtras}
+            session={session}
+            onSaveProfile={handleSaveProfile}
+          />
+        ) : shouldGateRemoteApp ? (
+          <OnboardingPage
+            couple={couple}
+            hasPartner={hasPartner}
+            onAcceptRequest={handleAcceptRequest}
+            onCancelRequest={handleCancelRequest}
+            onCreateCouple={handleCreateCouple}
+            onFindPartner={handleFindPartner}
+            onJoinCouple={handleJoinCouple}
+            onRejectRequest={handleRejectRequest}
+            onSendCoupleRequest={handleSendCoupleRequest}
+            onStartCheckup={() => setActivePage('checkups')}
+            partnerProfile={partnerProfile}
+            profile={profile}
+            requests={coupleRequests}
+            session={session}
+            setActivePage={setActivePage}
+          />
         ) : activePage === 'overview' ? (
           <Overview
             scores={scores}
             history={history}
+            partnerLabel={partnerLabel}
             setActivePage={setActivePage}
           />
         ) : activePage === 'history' ? (
