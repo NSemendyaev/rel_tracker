@@ -1,0 +1,1645 @@
+import { useEffect, useMemo, useState } from 'react'
+import './App.css'
+import dashboard from './assets/dashboard.png'
+import { isSupabaseConfigured, supabase } from './supabaseClient'
+
+const storageKey = 'purrfect-relationship-tracker'
+const getInviteCode = () => Math.random().toString(36).slice(2, 10).toUpperCase()
+
+const people = {
+  me: { id: 'me', label: 'Me', possessive: 'My' },
+  partner: { id: 'partner', label: 'Partner', possessive: "Partner's" },
+}
+
+const weights = {
+  daily: 0.2,
+  weekly: 0.3,
+  monthly: 0.5,
+}
+
+const navItems = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'checkups', label: 'Check-ups' },
+  { id: 'history', label: 'History' },
+]
+
+const principles = [
+  {
+    id: 'recognition',
+    title: 'Recognition',
+    baseValue: 85,
+    tone: 'rose',
+    icon: 'heart',
+    cropX: 160,
+    cropY: 132,
+    meaning:
+      'Recognition is the feeling that someone notices you and values your presence, effort, or achievements. It helps a person feel seen rather than ignored, and it strengthens confidence in a relationship because actions and contributions are acknowledged.',
+  },
+  {
+    id: 'acceptance',
+    title: 'Acceptance',
+    baseValue: 90,
+    tone: 'green',
+    icon: 'check',
+    cropX: 570,
+    cropY: 132,
+    meaning:
+      'Acceptance means being allowed to be yourself without feeling pressured to change your personality, opinions, or behaviour to be loved or included. It creates comfort and reduces fear of judgment.',
+  },
+  {
+    id: 'stability',
+    title: 'Emotional Stability',
+    baseValue: 70,
+    tone: 'blue',
+    icon: 'shield',
+    cropX: 980,
+    cropY: 132,
+    meaning:
+      'Emotional Stability refers to consistency in how people behave emotionally towards each other. It means moods and reactions are not unpredictable or extreme, so the relationship feels steady and reliable over time.',
+  },
+  {
+    id: 'initiative',
+    title: 'Initiative',
+    baseValue: 60,
+    tone: 'amber',
+    icon: 'bolt',
+    cropX: 160,
+    cropY: 614,
+    meaning:
+      'Initiative is when both people actively contribute to maintaining the relationship instead of one person doing all the work. It includes starting conversations, making plans, and showing effort without being asked.',
+  },
+  {
+    id: 'intimacy',
+    title: 'Emotional Intimacy',
+    baseValue: 80,
+    tone: 'purple',
+    icon: 'heart',
+    cropX: 570,
+    cropY: 614,
+    meaning:
+      'Emotional Intimacy is the ability to share thoughts, feelings, and vulnerabilities in a safe way. It develops trust and closeness because both people feel understood and supported at a deeper level.',
+  },
+  {
+    id: 'safety',
+    title: 'Safety',
+    baseValue: 95,
+    tone: 'rose',
+    icon: 'shield',
+    cropX: 980,
+    cropY: 614,
+    meaning:
+      'Safety covers feeling secure in all ways: physically protected, emotionally respected, and practically supported. It means there is no fear of harm, manipulation, or instability in the relationship.',
+  },
+]
+
+const questionSets = {
+  daily: {
+    title: 'Daily check-up',
+    eyebrow: 'Tiny pulse',
+    summary: 'A fast end-of-day reflection. Use the person switch to fill it as you or as your partner.',
+    weightLabel: '20% of overall score',
+    cadence: 'Today',
+    questions: {
+      recognition: ['How seen or appreciated did you feel today?'],
+      acceptance: ['Did you feel free to be yourself today?'],
+      stability: ['How emotionally steady did the relationship feel today?'],
+      initiative: ['Did both people show effort today?'],
+      intimacy: ['Did you feel emotionally connected today?'],
+      safety: ['Did you feel respected and secure today?'],
+    },
+  },
+  weekly: {
+    title: 'Weekly check-up',
+    eyebrow: 'Pattern check',
+    summary: 'A weekly look at repeated behaviour. Compare both sides to spot mismatched experiences.',
+    weightLabel: '30% of overall score',
+    cadence: 'This week',
+    questions: {
+      recognition: [
+        'Were your efforts noticed or acknowledged this week?',
+        'Did appreciation feel specific rather than automatic?',
+      ],
+      acceptance: [
+        'Did you feel accepted without needing to perform or shrink yourself?',
+        'Were differences in opinions, moods, or needs handled kindly?',
+      ],
+      stability: [
+        'Were conflicts or mood changes handled calmly this week?',
+        'Did the relationship feel reliable across good and difficult moments?',
+      ],
+      initiative: [
+        'Did both people contribute to plans, care, or communication?',
+        'Did effort feel balanced rather than carried by one person?',
+      ],
+      intimacy: [
+        'Did you have meaningful emotional conversations this week?',
+        'Was there space for vulnerability without judgment?',
+      ],
+      safety: [
+        'Did the relationship feel safe, respectful, and reliable this week?',
+        'Were boundaries and practical needs respected?',
+      ],
+    },
+  },
+  monthly: {
+    title: 'Monthly check-up',
+    eyebrow: 'Deep review',
+    summary: 'A slower relationship health review. Monthly answers carry the heaviest influence.',
+    weightLabel: '50% of overall score',
+    cadence: 'This month',
+    questions: {
+      recognition: [
+        'Have you felt valued in a lasting way over the past month?',
+        'Were your contributions remembered beyond the moment?',
+        'Did recognition strengthen your confidence in the relationship?',
+      ],
+      acceptance: [
+        'Have you felt loved as you are over the past month?',
+        'Could you show imperfect or complicated parts of yourself safely?',
+        'Did the relationship make room for growth without pressure to become someone else?',
+      ],
+      stability: [
+        'Has the relationship felt predictable and emotionally reliable?',
+        'Were recurring tensions handled with more care over time?',
+        'Did you recover from hard moments without fear of sudden distance or instability?',
+      ],
+      initiative: [
+        'Has effort felt balanced between both people this month?',
+        'Did both people invest in connection without needing constant prompting?',
+        'Were plans, repair, and care shared in a way that felt fair?',
+      ],
+      intimacy: [
+        'Has trust and closeness grown, stayed stable, or weakened?',
+        'Were deeper feelings, worries, or needs welcomed?',
+        'Did you feel known by the other person in a meaningful way?',
+      ],
+      safety: [
+        'Have you felt secure physically, emotionally, and practically?',
+        'Were boundaries, consent, and emotional limits respected consistently?',
+        'Did the relationship feel like a safe place to return to?',
+      ],
+    },
+  },
+}
+
+const ratingLabels = ['Hardly', 'A little', 'Somewhat', 'Mostly', 'Very much']
+
+const formatDate = (dateValue) => (
+  new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(dateValue))
+)
+
+const makeInitialResponses = () => (
+  Object.fromEntries(
+    Object.entries(questionSets).map(([period, set]) => [
+      period,
+      Object.fromEntries(
+        principles.map((principle) => [
+          principle.id,
+          set.questions[principle.id].map(() => Math.round(principle.baseValue / 20)),
+        ]),
+      ),
+    ]),
+  )
+)
+
+const makeCoupleResponses = () => ({
+  me: makeInitialResponses(),
+  partner: makeInitialResponses(),
+})
+
+const getEmptyNotes = () => (
+  Object.fromEntries(Object.keys(questionSets).map((period) => [period, '']))
+)
+
+const makeCoupleNotes = () => ({
+  me: getEmptyNotes(),
+  partner: getEmptyNotes(),
+})
+
+const normalizeResponses = (responses) => {
+  const fallback = makeInitialResponses()
+
+  return Object.fromEntries(
+    Object.entries(questionSets).map(([period, set]) => [
+      period,
+      Object.fromEntries(
+        principles.map((principle) => {
+          const savedAnswers = responses?.[period]?.[principle.id]
+          const expectedLength = set.questions[principle.id].length
+
+          if (!Array.isArray(savedAnswers) || savedAnswers.length !== expectedLength) {
+            return [principle.id, fallback[period][principle.id]]
+          }
+
+          return [
+            principle.id,
+            savedAnswers.map((answer) => Math.min(5, Math.max(1, Number(answer) || 3))),
+          ]
+        }),
+      ),
+    ]),
+  )
+}
+
+const normalizeCoupleResponses = (responses) => {
+  if (responses?.me || responses?.partner) {
+    return {
+      me: normalizeResponses(responses.me),
+      partner: normalizeResponses(responses.partner),
+    }
+  }
+
+  return {
+    me: normalizeResponses(responses),
+    partner: makeInitialResponses(),
+  }
+}
+
+const normalizeCoupleNotes = (notes) => {
+  const fallback = makeCoupleNotes()
+
+  if (notes?.me || notes?.partner) {
+    return {
+      me: { ...fallback.me, ...(notes.me ?? {}) },
+      partner: { ...fallback.partner, ...(notes.partner ?? {}) },
+    }
+  }
+
+  return {
+    me: { ...fallback.me, ...(notes ?? {}) },
+    partner: fallback.partner,
+  }
+}
+
+const normalizeHistory = (history) => {
+  if (!Array.isArray(history)) {
+    return []
+  }
+
+  return history.map((entry) => ({
+    ...entry,
+    person: entry.person ?? 'me',
+    personLabel: entry.personLabel ?? people[entry.person ?? 'me'].label,
+  }))
+}
+
+const mapSubmissionRow = (row, currentUserId, memberLabels = {}) => {
+  const isCurrentUser = row.user_id === currentUserId
+  const person = isCurrentUser ? 'me' : 'partner'
+
+  return {
+    id: row.id,
+    person,
+    personLabel: isCurrentUser ? people.me.label : (memberLabels[row.user_id] ?? people.partner.label),
+    period: row.period,
+    periodLabel: questionSets[row.period].title,
+    principleScores: row.principle_scores,
+    overallScore: row.overall_score,
+    responses: row.responses,
+    note: row.note ?? '',
+    createdAt: row.created_at,
+    userId: row.user_id,
+  }
+}
+
+const getQuestionAverage = (answers) => (
+  answers.reduce((total, answer) => total + answer, 0) / answers.length
+)
+
+const getPeriodPrincipleScore = (answers) => Math.round((getQuestionAverage(answers) / 5) * 100)
+
+const getInitialPeriodScores = () => (
+  Object.fromEntries(
+    Object.keys(questionSets).map((period) => [
+      period,
+      getPeriodScores(period, makeInitialResponses()[period]),
+    ]),
+  )
+)
+
+const getLatestSubmittedPeriods = (history, person) => {
+  const fallback = getInitialPeriodScores()
+
+  return Object.fromEntries(
+    Object.keys(questionSets).map((period) => {
+      const latestEntry = history.find((entry) => entry.person === person && entry.period === period)
+      return [period, latestEntry ?? fallback[period]]
+    }),
+  )
+}
+
+const calculateSubmittedScores = (history, person) => {
+  const submittedPeriods = getLatestSubmittedPeriods(history, person)
+
+  const principleScores = Object.fromEntries(
+    principles.map((principle) => {
+      const weightedScore = Object.keys(questionSets).reduce((total, period) => (
+        total + (submittedPeriods[period].principleScores?.[principle.id] ?? 0) * weights[period]
+      ), 0)
+
+      return [principle.id, Math.round(weightedScore)]
+    }),
+  )
+
+  const overallScore = Math.round(
+    Object.values(principleScores).reduce((total, score) => total + score, 0) / principles.length,
+  )
+
+  return { principleScores, overallScore }
+}
+
+const calculateSubmittedCoupleScores = (history) => {
+  const me = calculateSubmittedScores(history, 'me')
+  const partner = calculateSubmittedScores(history, 'partner')
+  const principleScores = Object.fromEntries(
+    principles.map((principle) => [
+      principle.id,
+      Math.round((me.principleScores[principle.id] + partner.principleScores[principle.id]) / 2),
+    ]),
+  )
+  const overallScore = Math.round((me.overallScore + partner.overallScore) / 2)
+
+  return { me, partner, couple: { principleScores, overallScore } }
+}
+
+const getPeriodScores = (period, periodResponses) => {
+  const principleScores = Object.fromEntries(
+    principles.map((principle) => [
+      principle.id,
+      getPeriodPrincipleScore(periodResponses[principle.id]),
+    ]),
+  )
+
+  const overallScore = Math.round(
+    Object.values(principleScores).reduce((total, score) => total + score, 0) / principles.length,
+  )
+
+  return {
+    period,
+    periodLabel: questionSets[period].title,
+    principleScores,
+    overallScore,
+  }
+}
+
+const getSavedState = () => {
+  const fallback = {
+    responses: makeCoupleResponses(),
+    notes: makeCoupleNotes(),
+    history: [],
+  }
+
+  try {
+    const rawState = window.localStorage.getItem(storageKey)
+
+    if (!rawState) {
+      return fallback
+    }
+
+    const savedState = JSON.parse(rawState)
+
+    return {
+      responses: normalizeCoupleResponses(savedState.responses),
+      notes: normalizeCoupleNotes(savedState.notes),
+      history: normalizeHistory(savedState.history),
+    }
+  } catch {
+    return fallback
+  }
+}
+
+const getTrendSummary = (history) => {
+  if (history.length < 2) {
+    return {
+      direction: 'steady',
+      label: 'No trend yet',
+      detail: 'Save at least two check-ups to see movement over time.',
+    }
+  }
+
+  const latest = history[0]
+  const previous = history.find((entry) => (
+    entry.person === latest.person && entry.period === latest.period && entry.id !== latest.id
+  )) ?? history[1]
+  const delta = latest.overallScore - previous.overallScore
+
+  if (delta >= 3) {
+    return {
+      direction: 'up',
+      label: `Up ${delta} points`,
+      detail: `${latest.personLabel}'s ${latest.periodLabel} improved compared with their previous saved check-up.`,
+    }
+  }
+
+  if (delta <= -3) {
+    return {
+      direction: 'down',
+      label: `Down ${Math.abs(delta)} points`,
+      detail: `${latest.personLabel}'s ${latest.periodLabel} dipped compared with their previous saved check-up.`,
+    }
+  }
+
+  return {
+    direction: 'steady',
+    label: 'Mostly steady',
+    detail: `${latest.personLabel}'s ${latest.periodLabel} is close to their previous saved check-up.`,
+  }
+}
+
+const getLargestGap = (scores) => {
+  return principles
+    .map((principle) => ({
+      ...principle,
+      gap: Math.abs(scores.me.principleScores[principle.id] - scores.partner.principleScores[principle.id]),
+      meScore: scores.me.principleScores[principle.id],
+      partnerScore: scores.partner.principleScores[principle.id],
+    }))
+    .sort((a, b) => b.gap - a.gap)[0]
+}
+
+const PersonSwitch = ({ activePerson, onChange }) => (
+  <div className="person-switch" aria-label="Current perspective">
+    {Object.values(people).map((person) => (
+      <button
+        className={activePerson === person.id ? 'active' : ''}
+        type="button"
+        onClick={() => onChange(person.id)}
+        key={person.id}
+      >
+        {person.label}
+      </button>
+    ))}
+  </div>
+)
+
+const PrincipleCard = ({ principle, coupleScore, meScore, partnerScore }) => {
+  const gap = Math.abs(meScore - partnerScore)
+
+  return (
+    <article className={`card card-${principle.tone}`}>
+      <div className="card-art">
+        <img
+          src={dashboard}
+          alt=""
+          style={{
+            '--crop-x': `${(principle.cropX / 1536) * 100}%`,
+            '--crop-y': `${(principle.cropY / 1024) * 100}%`,
+          }}
+        />
+        <span className={`badge badge-${principle.icon}`} aria-hidden="true"></span>
+      </div>
+
+      <div className="card-body">
+        <h2>
+          <span className={`title-icon badge-${principle.icon}`} aria-hidden="true"></span>
+          {principle.title}
+        </h2>
+
+        <p>{principle.meaning}</p>
+
+        <div className="score-row">
+          <div
+            className="progress"
+            role="meter"
+            aria-label={`${principle.title} couple score`}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow={coupleScore}
+          >
+            <span
+              className="progress-fill"
+              style={{ width: `${coupleScore}%` }}
+            ></span>
+          </div>
+          <strong>{coupleScore}/100</strong>
+        </div>
+
+        <div className="comparison-row">
+          <span>Me <b>{meScore}</b></span>
+          <span>Partner <b>{partnerScore}</b></span>
+          <span>Gap <b>{gap}</b></span>
+        </div>
+      </div>
+    </article>
+  )
+}
+
+const Overview = ({ scores, history, setActivePage }) => {
+  const latestEntries = history.slice(0, 4)
+  const trend = getTrendSummary(history)
+  const latestEntry = history[0]
+  const largestGap = getLargestGap(scores)
+
+  return (
+    <>
+      <section className="score-hero" id="overview">
+        <div>
+          <span className="eyebrow">Shared couple score</span>
+          <h1>{scores.couple.overallScore}/100</h1>
+          <p>
+            Overview uses the latest submitted check-ups from each person. Draft slider changes
+            stay private until they are saved.
+          </p>
+        </div>
+
+        <div className="couple-score-stack" aria-label="Score comparison">
+          <div>
+            <span>Me</span>
+            <strong>{scores.me.overallScore}</strong>
+          </div>
+          <div>
+            <span>Partner</span>
+            <strong>{scores.partner.overallScore}</strong>
+          </div>
+          <div>
+            <span>Largest gap</span>
+            <strong>{largestGap.gap}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className="insight-grid overview-insights" aria-label="Relationship trends">
+        <article className={`insight-card trend-${trend.direction}`}>
+          <span className="eyebrow">Trend</span>
+          <h2>{trend.label}</h2>
+          <p>{trend.detail}</p>
+          {latestEntry && (
+            <small>
+              Latest: {latestEntry.personLabel} saved {latestEntry.periodLabel} on {formatDate(latestEntry.createdAt)}
+            </small>
+          )}
+        </article>
+
+        <article className="insight-card">
+          <span className="eyebrow">Largest feeling gap</span>
+          <h2>{largestGap.title}</h2>
+          <p>
+            Me: {largestGap.meScore}/100. Partner: {largestGap.partnerScore}/100.
+            A high gap can mean one person is having a meaningfully different experience.
+          </p>
+        </article>
+
+        <article className="history-card">
+          <div className="history-heading">
+            <span className="eyebrow">Recent shared history</span>
+            <strong>{history.length} saved</strong>
+          </div>
+          {latestEntries.length > 0 ? (
+            <ul>
+              {latestEntries.map((entry) => (
+                <li key={entry.id}>
+                  <span>
+                    <strong>{entry.personLabel} - {entry.periodLabel}</strong>
+                    <small>{formatDate(entry.createdAt)}</small>
+                  </span>
+                  <b>{entry.overallScore}/100</b>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No saved check-ups yet.</p>
+          )}
+        </article>
+      </section>
+
+      <section className="quick-entry-panel">
+        <span className="eyebrow">Next check-in</span>
+        <h2>Record both sides when you are ready.</h2>
+        <button type="button" onClick={() => setActivePage('checkups')}>
+          Open check-ups
+        </button>
+      </section>
+
+      <div className="grid">
+        {principles.map((principle) => (
+          <PrincipleCard
+            principle={principle}
+            coupleScore={scores.couple.principleScores[principle.id]}
+            meScore={scores.me.principleScores[principle.id]}
+            partnerScore={scores.partner.principleScores[principle.id]}
+            key={principle.id}
+          />
+        ))}
+      </div>
+    </>
+  )
+}
+
+const CheckupsPage = (props) => {
+  const [selectedPeriod, setSelectedPeriod] = useState('daily')
+  const { activePerson, responsesByPerson, notesByPerson, canSwitchPerson } = props
+
+  return (
+    <section className="checkups-page">
+      <header className="checkups-hero">
+        <div>
+          <span className="eyebrow">Shared check-ins</span>
+          <h1>Check-ups</h1>
+          <p>
+            {canSwitchPerson
+              ? 'Choose a cadence, then switch between Me and Partner to record each side separately.'
+              : 'Choose a cadence and submit your own feelings. Your partner sees them in the shared workspace.'}
+          </p>
+        </div>
+
+        <div className="period-tabs" aria-label="Check-up cadence">
+          {Object.keys(questionSets).map((period) => (
+            <button
+              className={selectedPeriod === period ? 'active' : ''}
+              type="button"
+              onClick={() => setSelectedPeriod(period)}
+              key={period}
+            >
+              <span>{questionSets[period].eyebrow}</span>
+              {questionSets[period].title.replace(' check-up', '')}
+            </button>
+          ))}
+        </div>
+      </header>
+
+      <SurveyPage
+        {...props}
+        period={selectedPeriod}
+        responses={responsesByPerson[activePerson][selectedPeriod]}
+        note={notesByPerson[activePerson][selectedPeriod]}
+      />
+    </section>
+  )
+}
+
+const SurveyPage = ({
+  period,
+  activePerson,
+  responses,
+  note,
+  history,
+  onAnswerChange,
+  onNoteChange,
+  onReset,
+  onSave,
+  canSwitchPerson = true,
+}) => {
+  const set = questionSets[period]
+  const person = people[activePerson]
+  const periodHistory = history.filter((entry) => entry.period === period && entry.person === activePerson)
+  const latestEntry = periodHistory[0]
+  const periodAverage = Math.round(
+    principles.reduce((total, principle) => (
+      total + getPeriodPrincipleScore(responses[principle.id])
+    ), 0) / principles.length,
+  )
+
+  return (
+    <section className="checkup-page">
+      <header className="checkup-hero">
+        <div>
+          <span className="eyebrow">{set.eyebrow}</span>
+          <h1>{set.title}</h1>
+          <p>{person.label} is filling this in. {set.summary}</p>
+        </div>
+
+        <div className="checkup-side">
+          {canSwitchPerson && (
+            <PersonSwitch activePerson={activePerson} onChange={onAnswerChange.switchPerson} />
+          )}
+          <div className="checkup-score">
+            <span>{person.possessive} draft average</span>
+            <strong>{periodAverage}/100</strong>
+            <small>{set.weightLabel} after submit</small>
+          </div>
+        </div>
+      </header>
+
+      <div className="survey-grid">
+        {principles.map((principle) => {
+          const answers = responses[principle.id]
+          const score = getPeriodPrincipleScore(answers)
+
+          return (
+            <article className={`survey-card card-${principle.tone}`} key={principle.id}>
+              <div className="survey-card-header">
+                <h2>
+                  <span className={`title-icon badge-${principle.icon}`} aria-hidden="true"></span>
+                  {principle.title}
+                </h2>
+                <strong>{score}/100</strong>
+              </div>
+
+              {set.questions[principle.id].map((question, index) => (
+                <label className="question-row" key={question}>
+                  <span>{question}</span>
+                  <div className="range-wrap">
+                    <input
+                      type="range"
+                      min="1"
+                      max="5"
+                      value={answers[index]}
+                      onChange={(event) => onAnswerChange.update(period, activePerson, principle.id, index, Number(event.target.value))}
+                      aria-label={`${person.label}: ${question}`}
+                    />
+                    <output>{ratingLabels[answers[index] - 1]}</output>
+                  </div>
+                </label>
+              ))}
+            </article>
+          )
+        })}
+      </div>
+
+      <footer className="survey-actions">
+        <div>
+          <p>
+            These answers are a draft. Save when {person.label.toLowerCase()} is ready to submit
+            this check-up to the shared Overview and History.
+          </p>
+          {latestEntry && (
+            <small>
+              {person.label} last saved {formatDate(latestEntry.createdAt)} at {latestEntry.overallScore}/100.
+            </small>
+          )}
+        </div>
+
+        <label className="note-field">
+          <span>{person.possessive} optional reflection</span>
+          <textarea
+            value={note}
+            onChange={(event) => onNoteChange(period, activePerson, event.target.value)}
+            placeholder="What caused these scores?"
+            rows="3"
+          />
+        </label>
+
+        <div className="survey-button-row">
+          <button type="button" onClick={() => onReset(period, activePerson)}>
+            Reset
+          </button>
+          <button type="button" onClick={() => onSave(period, activePerson)}>
+            Save as {person.label}
+          </button>
+        </div>
+      </footer>
+    </section>
+  )
+}
+
+const HistoryPage = ({ history, setActivePage }) => {
+  const historyByPeriod = Object.keys(questionSets).map((period) => ({
+    period,
+    ...questionSets[period],
+    entries: history.filter((entry) => entry.period === period),
+  }))
+
+  return (
+    <section className="history-page">
+      <header className="history-hero">
+        <div>
+          <span className="eyebrow">Shared saved check-ups</span>
+          <h1>History</h1>
+          <p>
+            Review saved Daily, Weekly, and Monthly check-ups from both people,
+            including notes and principle-by-principle scores.
+          </p>
+        </div>
+
+        <div className="history-summary">
+          <strong>{history.length}</strong>
+          <span>saved check-ups</span>
+        </div>
+      </header>
+
+      <div className="history-period-grid">
+        {historyByPeriod.map(({ period, title, weightLabel, entries }) => (
+          <section className="history-period" key={period}>
+            <div className="history-period-header">
+              <div>
+                <span className="eyebrow">{weightLabel}</span>
+                <h2>{title}</h2>
+              </div>
+              <strong>{entries.length}</strong>
+            </div>
+
+            {entries.length > 0 ? (
+              <div className="history-entry-list">
+                {entries.map((entry) => (
+                  <article className={`history-entry person-${entry.person}`} key={entry.id}>
+                    <div className="history-entry-top">
+                      <span>{entry.personLabel} - {formatDate(entry.createdAt)}</span>
+                      <strong>{entry.overallScore}/100</strong>
+                    </div>
+
+                    {entry.note && <p>{entry.note}</p>}
+
+                    <div className="principle-chip-grid">
+                      {principles.map((principle) => (
+                        <span className={`principle-chip chip-${principle.tone}`} key={principle.id}>
+                          {principle.title}
+                          <b>{entry.principleScores?.[principle.id] ?? '--'}</b>
+                        </span>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-history">
+                <p>No saved {title.toLowerCase()} entries yet.</p>
+                <button type="button" onClick={() => setActivePage('checkups')}>
+                  Start {title}
+                </button>
+              </div>
+            )}
+          </section>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+const AuthPanel = ({ session, onGoogleSignIn, onEmailSignIn, onEmailSignUp, onSignOut }) => {
+  const [authMode, setAuthMode] = useState('sign-in')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+
+  if (!isSupabaseConfigured) {
+    return (
+      <section className="auth-panel">
+        <div>
+          <span className="eyebrow">Local prototype mode</span>
+          <h2>Connect Supabase to enable real couple sharing.</h2>
+          <p>Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, then run the SQL in `supabase-schema.sql`.</p>
+        </div>
+      </section>
+    )
+  }
+
+  if (!session) {
+    return (
+      <section className="auth-panel">
+        <div>
+          <span className="eyebrow">Private sharing</span>
+          <h2>{authMode === 'sign-in' ? 'Sign in to sync with your partner.' : 'Create your account.'}</h2>
+          <p>Register or sign in. Your drafts stay local; submitted check-ups sync in your couple workspace.</p>
+        </div>
+        <form
+          className="auth-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (authMode === 'sign-in') {
+              onEmailSignIn(email, password)
+            } else {
+              onEmailSignUp(email, password)
+            }
+          }}
+        >
+          <input
+            autoComplete="email"
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="email@example.com"
+            type="email"
+            value={email}
+          />
+          <input
+            autoComplete={authMode === 'sign-in' ? 'current-password' : 'new-password'}
+            minLength="6"
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Password"
+            type="password"
+            value={password}
+          />
+          <button type="submit">{authMode === 'sign-in' ? 'Sign in' : 'Register'}</button>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setAuthMode(authMode === 'sign-in' ? 'register' : 'sign-in')}
+          >
+            {authMode === 'sign-in' ? 'Need an account?' : 'Already registered?'}
+          </button>
+          <button className="secondary-button" type="button" onClick={onGoogleSignIn}>
+            Continue with Google
+          </button>
+        </form>
+      </section>
+    )
+  }
+
+  return (
+    <section className="auth-panel compact">
+      <div>
+        <span className="eyebrow">Signed in</span>
+        <h2>{session.user.user_metadata?.full_name ?? session.user.email}</h2>
+        <p className="user-id-line">Your ID: <code>{session.user.id}</code></p>
+      </div>
+      <button type="button" onClick={onSignOut}>Sign out</button>
+    </section>
+  )
+}
+
+const SetupGate = ({ session, couple, hasPartner }) => {
+  let title = 'Sign in before using the relationship dashboard.'
+  let detail = 'Check-ups and scores only become useful when they belong to real accounts.'
+
+  if (session && !couple) {
+    title = 'Create or join a couple workspace.'
+    detail = 'Once both people are connected, you can submit your own check-ups and view your partner\'s feelings.'
+  } else if (session && couple && !hasPartner) {
+    title = 'Waiting for your partner.'
+    detail = 'Share the invite code or look them up by ID/email. The dashboard unlocks when the couple has both members.'
+  }
+
+  return (
+    <section className="setup-gate">
+      <span className="eyebrow">Setup required</span>
+      <h1>{title}</h1>
+      <p>{detail}</p>
+    </section>
+  )
+}
+
+const CouplePanel = ({ session, couple, hasPartner, onAddPartner, onCreateCouple, onFindPartner, onJoinCouple }) => {
+  const [inviteCode, setInviteCode] = useState('')
+  const [partnerQuery, setPartnerQuery] = useState('')
+  const [partnerProfile, setPartnerProfile] = useState(null)
+
+  if (!isSupabaseConfigured || !session) {
+    return null
+  }
+
+  if (couple) {
+    return (
+      <section className="couple-panel">
+        <div>
+          <span className="eyebrow">Couple workspace</span>
+          <h2>Invite code: {couple.invite_code}</h2>
+          <p>
+            {hasPartner
+              ? 'Connected. You submit your feelings as yourself, and your partner submits theirs from their account.'
+              : 'Add your partner before check-ups unlock. They can join by code, or you can look them up after they register.'}
+          </p>
+        </div>
+        {!hasPartner && (
+          <div className="couple-actions">
+            <label>
+              <span>Partner ID or email</span>
+              <input
+                className="wide-input"
+                value={partnerQuery}
+                onChange={(event) => {
+                  setPartnerQuery(event.target.value)
+                  setPartnerProfile(null)
+                }}
+                placeholder="uuid or email"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={async () => {
+                const profile = await onFindPartner(partnerQuery)
+                setPartnerProfile(profile)
+              }}
+            >
+              Look up
+            </button>
+            {partnerProfile && (
+              <button type="button" onClick={() => onAddPartner(partnerProfile.id)}>
+                Add {partnerProfile.display_name || partnerProfile.email}
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+    )
+  }
+
+  return (
+    <section className="couple-panel">
+      <div>
+        <span className="eyebrow">Couple workspace</span>
+        <h2>Find your partner or join by code.</h2>
+        <p>Search by their user ID or email after they register, then create a shared couple workspace.</p>
+      </div>
+      <div className="couple-actions">
+        <label>
+          <span>Partner ID or email</span>
+          <input
+            className="wide-input"
+            value={partnerQuery}
+            onChange={(event) => {
+              setPartnerQuery(event.target.value)
+              setPartnerProfile(null)
+            }}
+            placeholder="uuid or email"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={async () => {
+            const profile = await onFindPartner(partnerQuery)
+            setPartnerProfile(profile)
+          }}
+        >
+          Look up
+        </button>
+        {partnerProfile && (
+          <button type="button" onClick={() => onCreateCouple(partnerProfile.id)}>
+            Create with {partnerProfile.display_name || partnerProfile.email}
+          </button>
+        )}
+        <label>
+          <span>Invite code</span>
+          <input
+            value={inviteCode}
+            onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+            placeholder="AB12CD34"
+          />
+        </label>
+        <button type="button" onClick={() => onJoinCouple(inviteCode)}>Join</button>
+      </div>
+    </section>
+  )
+}
+
+function App() {
+  const [savedState] = useState(getSavedState)
+  const [activePage, setActivePage] = useState('overview')
+  const [activePerson, setActivePerson] = useState('me')
+  const [responses, setResponses] = useState(savedState.responses)
+  const [notes, setNotes] = useState(savedState.notes)
+  const [history, setHistory] = useState(savedState.history)
+  const [session, setSession] = useState(null)
+  const [couple, setCouple] = useState(null)
+  const [coupleMembers, setCoupleMembers] = useState([])
+  const [statusMessage, setStatusMessage] = useState('')
+
+  const scores = useMemo(() => calculateSubmittedCoupleScores(history), [history])
+  const hasPartner = coupleMembers.length >= 2
+  const isRemoteReady = isSupabaseConfigured && session && couple && hasPartner
+  const shouldGateRemoteApp = isSupabaseConfigured && (!session || !couple || !hasPartner)
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(storageKey, JSON.stringify({ responses, notes, history }))
+    } catch {
+      // Storage is a convenience layer. The app should remain usable without it.
+    }
+  }, [responses, notes, history])
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return undefined
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session)
+    })
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      if (!nextSession) {
+        setCouple(null)
+        setCoupleMembers([])
+        setHistory([])
+      }
+    })
+
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  const upsertProfile = async (currentSession) => {
+    if (!currentSession) {
+      return
+    }
+
+    const { user } = currentSession
+    const profile = {
+      id: user.id,
+      email: user.email,
+      display_name: user.user_metadata?.full_name ?? user.email,
+      avatar_url: user.user_metadata?.avatar_url ?? null,
+    }
+
+    const { error } = await supabase.from('profiles').upsert(profile)
+
+    if (error) {
+      throw error
+    }
+  }
+
+  const loadCouple = async (currentSession = session) => {
+    if (!isSupabaseConfigured || !currentSession) {
+      return
+    }
+
+    await upsertProfile(currentSession)
+
+    const { data: memberships, error: membershipError } = await supabase
+      .from('couple_members')
+      .select('couple_id')
+      .eq('user_id', currentSession.user.id)
+      .limit(1)
+
+    if (membershipError) {
+      throw membershipError
+    }
+
+    const membership = memberships?.[0]
+
+    if (!membership) {
+      setCouple(null)
+      setCoupleMembers([])
+      setHistory([])
+      return
+    }
+
+    const { data: coupleRow, error: coupleError } = await supabase
+      .from('couples')
+      .select('id, invite_code')
+      .eq('id', membership.couple_id)
+      .single()
+
+    if (coupleError) {
+      throw coupleError
+    }
+
+    setCouple(coupleRow)
+  }
+
+  const loadRemoteHistory = async (currentCouple = couple, currentSession = session) => {
+    if (!isSupabaseConfigured || !currentCouple || !currentSession) {
+      return
+    }
+
+    const { data: memberRows, error: membersError } = await supabase
+      .from('couple_members')
+      .select('user_id')
+      .eq('couple_id', currentCouple.id)
+
+    if (membersError) {
+      throw membersError
+    }
+
+    setCoupleMembers(memberRows)
+
+    const memberIds = memberRows.map((member) => member.user_id)
+    const { data: profiles, error: profilesError } = await supabase
+      .from('profiles')
+      .select('id, email, display_name')
+      .in('id', memberIds)
+
+    if (profilesError) {
+      throw profilesError
+    }
+
+    const labels = Object.fromEntries(
+      profiles.map((profile) => [
+        profile.id,
+        profile.display_name || profile.email || people.partner.label,
+      ]),
+    )
+    const { data: submissions, error: submissionsError } = await supabase
+      .from('checkup_submissions')
+      .select('*')
+      .eq('couple_id', currentCouple.id)
+      .order('created_at', { ascending: false })
+
+    if (submissionsError) {
+      throw submissionsError
+    }
+
+    setHistory(submissions.map((row) => mapSubmissionRow(row, currentSession.user.id, labels)))
+  }
+
+  useEffect(() => {
+    if (!session) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      loadCouple(session).catch((error) => {
+        setStatusMessage(error.message)
+      })
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
+
+  useEffect(() => {
+    if (!couple || !session) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      loadRemoteHistory(couple, session).catch((error) => {
+        setStatusMessage(error.message)
+      })
+    }, 0)
+
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [couple, session])
+
+  const handleSignIn = async () => {
+    setStatusMessage('')
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+      },
+    })
+
+    if (error) {
+      setStatusMessage(error.message)
+    }
+  }
+
+  const handleEmailSignIn = async (email, password) => {
+    setStatusMessage('')
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+
+    if (error) {
+      setStatusMessage(error.message)
+    }
+  }
+
+  const handleEmailSignUp = async (email, password) => {
+    setStatusMessage('')
+    const { data, error } = await supabase.auth.signUp({ email, password })
+
+    if (error) {
+      setStatusMessage(error.message)
+      return
+    }
+
+    if (data.session) {
+      await upsertProfile(data.session)
+      setStatusMessage('Registered and signed in.')
+    } else {
+      setStatusMessage('Registered. Check your email to confirm the account, then sign in.')
+    }
+  }
+
+  const handleSignOut = async () => {
+    setStatusMessage('')
+    const { error } = await supabase.auth.signOut()
+
+    if (error) {
+      setStatusMessage(error.message)
+    }
+  }
+
+  const handleFindPartner = async (query) => {
+    try {
+      setStatusMessage('')
+      const trimmedQuery = query.trim()
+
+      if (!trimmedQuery) {
+        setStatusMessage('Enter a partner ID or email first.')
+        return null
+      }
+
+      const isEmail = trimmedQuery.includes('@')
+      const filter = isEmail ? 'email' : 'id'
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, email, display_name')
+        .eq(filter, trimmedQuery)
+        .limit(1)
+
+      if (error) {
+        throw error
+      }
+
+      const profile = data?.[0]
+
+      if (!profile) {
+        setStatusMessage('No registered user found with that ID or email.')
+        return null
+      }
+
+      if (profile.id === session.user.id) {
+        setStatusMessage('That is your own account. Search for your partner instead.')
+        return null
+      }
+
+      setStatusMessage(`Found ${profile.display_name || profile.email}.`)
+      return profile
+    } catch (error) {
+      setStatusMessage(error.message)
+      return null
+    }
+  }
+
+  const handleCreateCouple = async (partnerId = null) => {
+    try {
+      setStatusMessage('')
+      await upsertProfile(session)
+
+      const newCouple = {
+        id: crypto.randomUUID(),
+        invite_code: getInviteCode(),
+        created_by: session.user.id,
+      }
+
+      const { error: coupleError } = await supabase.from('couples').insert(newCouple)
+
+      if (coupleError) {
+        throw coupleError
+      }
+
+      const { error: memberError } = await supabase.from('couple_members').insert({
+        couple_id: newCouple.id,
+        user_id: session.user.id,
+        role: 'owner',
+      })
+
+      if (memberError) {
+        throw memberError
+      }
+
+      if (partnerId) {
+        const { error: partnerMemberError } = await supabase.from('couple_members').insert({
+          couple_id: newCouple.id,
+          user_id: partnerId,
+          role: 'partner',
+        })
+
+        if (partnerMemberError) {
+          throw partnerMemberError
+        }
+      }
+
+      setCouple({ id: newCouple.id, invite_code: newCouple.invite_code })
+      setCoupleMembers([
+        { user_id: session.user.id },
+        ...(partnerId ? [{ user_id: partnerId }] : []),
+      ])
+      setStatusMessage(partnerId ? 'Couple created with your partner.' : 'Couple created. Share the invite code with your partner.')
+    } catch (error) {
+      setStatusMessage(error.message)
+    }
+  }
+
+  const handleAddPartner = async (partnerId) => {
+    try {
+      setStatusMessage('')
+
+      if (!couple) {
+        setStatusMessage('Create a couple workspace first.')
+        return
+      }
+
+      const { error } = await supabase.from('couple_members').insert({
+        couple_id: couple.id,
+        user_id: partnerId,
+        role: 'partner',
+      })
+
+      if (error) {
+        throw error
+      }
+
+      setCoupleMembers((current) => [
+        ...current.filter((member) => member.user_id !== partnerId),
+        { user_id: partnerId },
+      ])
+      await loadRemoteHistory(couple, session)
+      setStatusMessage('Partner added. Your shared check-ups are ready.')
+    } catch (error) {
+      setStatusMessage(error.message)
+    }
+  }
+
+  const handleJoinCouple = async (inviteCode) => {
+    try {
+      setStatusMessage('')
+      await upsertProfile(session)
+
+      const code = inviteCode.trim().toUpperCase()
+
+      if (!code) {
+        setStatusMessage('Enter an invite code first.')
+        return
+      }
+
+      const { data: coupleRows, error: coupleError } = await supabase
+        .from('couples')
+        .select('id, invite_code')
+        .eq('invite_code', code)
+        .limit(1)
+
+      if (coupleError) {
+        throw coupleError
+      }
+
+      const coupleRow = coupleRows?.[0]
+
+      if (!coupleRow) {
+        setStatusMessage('No couple found with that invite code.')
+        return
+      }
+
+      const { error: memberError } = await supabase.from('couple_members').upsert({
+        couple_id: coupleRow.id,
+        user_id: session.user.id,
+        role: 'partner',
+      })
+
+      if (memberError) {
+        throw memberError
+      }
+
+      setCouple(coupleRow)
+      setStatusMessage('Joined couple workspace.')
+    } catch (error) {
+      setStatusMessage(error.message)
+    }
+  }
+
+  const updateAnswer = (period, person, principleId, questionIndex, value) => {
+    setResponses((current) => ({
+      ...current,
+      [person]: {
+        ...current[person],
+        [period]: {
+          ...current[person][period],
+          [principleId]: current[person][period][principleId].map((answer, index) => (
+            index === questionIndex ? value : answer
+          )),
+        },
+      },
+    }))
+  }
+
+  const handleNoteChange = (period, person, value) => {
+    setNotes((current) => ({
+      ...current,
+      [person]: {
+        ...current[person],
+        [period]: value,
+      },
+    }))
+  }
+
+  const handleSave = async (period, person) => {
+    const periodScores = getPeriodScores(period, responses[person][period])
+    const nextEntry = {
+      ...periodScores,
+      person,
+      personLabel: people[person].label,
+      id: `${person}-${period}-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      note: notes[person][period].trim(),
+      responses: responses[person][period],
+    }
+
+    if (isSupabaseConfigured && !isRemoteReady) {
+      setStatusMessage('Connect with your partner before submitting check-ups.')
+      return
+    }
+
+    if (isRemoteReady) {
+      try {
+        setStatusMessage('')
+
+        const { error } = await supabase.from('checkup_submissions').insert({
+          couple_id: couple.id,
+          user_id: session.user.id,
+          period,
+          note: nextEntry.note,
+          responses: nextEntry.responses,
+          principle_scores: nextEntry.principleScores,
+          overall_score: nextEntry.overallScore,
+        })
+
+        if (error) {
+          throw error
+        }
+
+        await loadRemoteHistory(couple, session)
+        setStatusMessage('Submitted to your couple workspace.')
+        return
+      } catch (error) {
+        setStatusMessage(error.message)
+        return
+      }
+    }
+
+    setHistory((current) => [
+      nextEntry,
+      ...current,
+    ].slice(0, 48))
+  }
+
+  const handleReset = (period, person) => {
+    const fresh = makeInitialResponses()
+    setResponses((current) => ({
+      ...current,
+      [person]: {
+        ...current[person],
+        [period]: fresh[period],
+      },
+    }))
+    setNotes((current) => ({
+      ...current,
+      [person]: {
+        ...current[person],
+        [period]: '',
+      },
+    }))
+  }
+
+  return (
+    <main className="page">
+      <div className="room-detail window" aria-hidden="true">
+        <span></span>
+      </div>
+      <div className="room-detail plant left-plant" aria-hidden="true"></div>
+      <div className="room-detail plant right-plant" aria-hidden="true"></div>
+      <div className="room-detail cat-tree" aria-hidden="true"></div>
+      <div className="room-detail cushion" aria-hidden="true"></div>
+
+      <section className="dashboard-shell" aria-label="Purrfect relationship dashboard">
+        <nav className="navbar">
+          <button className="brand brand-button" type="button" onClick={() => setActivePage('overview')} aria-label="Purrfect overview">
+            <span className="paw" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            <span>
+              <strong>Purrfect</strong>
+              <small>Relationship Dashboard</small>
+            </span>
+          </button>
+
+          <div className="nav-links" aria-label="Dashboard sections">
+            {navItems.map((item) => (
+              <button
+                className={activePage === item.id ? 'active' : ''}
+                type="button"
+                onClick={() => setActivePage(item.id)}
+                key={item.id}
+              >
+                <span className="nav-icon" aria-hidden="true"></span>
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+        </nav>
+
+        <AuthPanel
+          session={session}
+          onGoogleSignIn={handleSignIn}
+          onEmailSignIn={handleEmailSignIn}
+          onEmailSignUp={handleEmailSignUp}
+          onSignOut={handleSignOut}
+        />
+
+        <CouplePanel
+          session={session}
+          couple={couple}
+          hasPartner={hasPartner}
+          onAddPartner={handleAddPartner}
+          onCreateCouple={handleCreateCouple}
+          onFindPartner={handleFindPartner}
+          onJoinCouple={handleJoinCouple}
+        />
+
+        {statusMessage && <p className="status-message">{statusMessage}</p>}
+
+        {shouldGateRemoteApp ? (
+          <SetupGate session={session} couple={couple} hasPartner={hasPartner} />
+        ) : activePage === 'overview' ? (
+          <Overview
+            scores={scores}
+            history={history}
+            setActivePage={setActivePage}
+          />
+        ) : activePage === 'history' ? (
+          <HistoryPage history={history} setActivePage={setActivePage} />
+        ) : (
+          <CheckupsPage
+            activePerson={isSupabaseConfigured ? 'me' : activePerson}
+            responsesByPerson={responses}
+            notesByPerson={notes}
+            history={history}
+            onAnswerChange={{ update: updateAnswer, switchPerson: setActivePerson }}
+            onNoteChange={handleNoteChange}
+            onReset={handleReset}
+            onSave={handleSave}
+            canSwitchPerson={!isSupabaseConfigured}
+          />
+        )}
+      </section>
+    </main>
+  )
+}
+
+export default App
