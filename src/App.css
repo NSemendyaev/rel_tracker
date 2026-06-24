@@ -12,7 +12,7 @@
 body {
   margin: 0;
   min-width: 320px;
-  background: #f8c8dc;
+  background: #fff7fb;
 }
 
 .page {
@@ -21,9 +21,10 @@ body {
   overflow: hidden;
   padding: 18px clamp(14px, 4vw, 46px) 34px;
   background:
-    radial-gradient(circle at 12% 86%, rgba(255, 177, 205, 0.8) 0 12%, transparent 25%),
-    radial-gradient(circle at 88% 12%, rgba(255, 214, 155, 0.65) 0 10%, transparent 24%),
-    linear-gradient(135deg, #ffd2e3 0%, #dcbff1 44%, #c4a7ef 100%);
+    radial-gradient(circle at 8% 10%, rgba(255, 173, 205, 0.28), transparent 34%),
+    radial-gradient(circle at 86% 4%, rgba(198, 165, 239, 0.24), transparent 32%),
+    radial-gradient(circle at 72% 92%, rgba(255, 220, 174, 0.28), transparent 36%),
+    linear-gradient(145deg, #fff9fc 0%, #fff0f6 42%, #f6f0ff 100%);
 }
 
 .page::before {
@@ -31,10 +32,22 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  opacity: 0.78;
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.32) 1px, transparent 1px) 8% 0 / 86px 100%,
-    linear-gradient(rgba(255, 255, 255, 0.28) 1px, transparent 1px) 0 12% / 100% 78px;
-  mask-image: linear-gradient(90deg, #000 0 18%, transparent 42% 100%);
+    radial-gradient(circle at 22% 28%, rgba(255, 255, 255, 0.72) 0 2px, transparent 3px) 0 0 / 42px 42px,
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), transparent 34%);
+  mask-image: linear-gradient(180deg, #000 0 60%, transparent 100%);
+}
+
+.page::after {
+  content: "";
+  position: absolute;
+  inset: 12px clamp(8px, 2vw, 24px);
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 34px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  opacity: 0.72;
 }
 
 .dashboard-shell {
@@ -46,9 +59,9 @@ body {
 
 .navbar {
   display: grid;
-  grid-template-columns: auto minmax(260px, 1fr);
+  grid-template-columns: auto minmax(220px, 0.72fr) minmax(360px, 1fr);
   align-items: center;
-  gap: 18px;
+  gap: 12px;
   margin: 0 auto 26px;
   padding: 12px 14px 12px 18px;
   color: #ffffff;
@@ -155,6 +168,73 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.status-pill,
+.header-signout {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.status-pill {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  max-width: 190px;
+  padding: 8px 11px;
+  border-radius: 14px;
+  color: #ffffff;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-pill:hover,
+.header-signout:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.status-pill span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.status-pill strong {
+  overflow: hidden;
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.couple-pill strong {
+  color: #ffb4d1;
+}
+
+.header-signout {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 11px;
+  border-radius: 13px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.84rem;
+  font-weight: 900;
+  background: transparent;
 }
 
 .nav-links button {
@@ -1401,6 +1481,200 @@ body {
   cursor: pointer;
 }
 
+.reflection-panel,
+.milestone-panel,
+.principle-detail-page,
+.talk-page {
+  margin: 0 clamp(4px, 4vw, 74px) 16px;
+}
+
+.reflection-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  border-radius: 20px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 242, 249, 0.74)),
+    radial-gradient(circle at 96% 12%, rgba(154, 91, 210, 0.2), transparent 34%);
+  box-shadow: 0 18px 42px rgba(54, 30, 74, 0.14);
+}
+
+.reflection-panel h2,
+.detail-card h2,
+.talk-card h2 {
+  margin: 0;
+  color: #151240;
+}
+
+.reflection-panel p,
+.detail-card p,
+.talk-card p,
+.milestone p {
+  color: #2a234c;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.reflection-panel small {
+  color: #7e294f;
+  font-weight: 850;
+}
+
+.reflection-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.reflection-actions button,
+.detail-card button,
+.talk-hero button,
+.talk-card button,
+.card-detail-button {
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  font: inherit;
+  font-weight: 900;
+  background: linear-gradient(135deg, #e94689, #9a5bd2);
+  cursor: pointer;
+  padding: 11px 13px;
+}
+
+.reflection-actions .secondary-button {
+  color: #151240;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.milestone-panel {
+  padding: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.68);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: 0 18px 42px rgba(54, 30, 74, 0.12);
+}
+
+.milestone-list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.milestone {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.milestone.done {
+  background: linear-gradient(135deg, rgba(229, 255, 238, 0.9), rgba(255, 255, 255, 0.72));
+}
+
+.milestone span,
+.talk-card span {
+  color: #d92d78;
+  font-size: 0.74rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.milestone strong {
+  display: block;
+  margin-top: 5px;
+  color: #151240;
+}
+
+.card-detail-button {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.principle-detail-hero,
+.talk-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 22px 24px;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 18px 42px rgba(54, 30, 74, 0.14);
+}
+
+.principle-detail-hero h1,
+.talk-hero h1 {
+  margin: 0;
+  color: #151240;
+  font-size: clamp(2.2rem, 5vw, 4.2rem);
+  line-height: 0.95;
+}
+
+.principle-detail-hero p,
+.talk-hero p {
+  max-width: 760px;
+  color: #2a234c;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.principle-detail-score {
+  display: grid;
+  gap: 6px;
+  min-width: 180px;
+  padding: 16px;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(135deg, #151240, #543070);
+}
+
+.principle-detail-score strong {
+  font-size: 2rem;
+}
+
+.detail-grid,
+.talk-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.detail-card,
+.talk-column {
+  padding: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.68);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 18px 42px rgba(54, 30, 74, 0.12);
+}
+
+.detail-entry-list,
+.talk-column {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-entry-list article,
+.talk-card {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.talk-card.resolved {
+  opacity: 0.68;
+}
+
+.empty-talk {
+  color: #2a234c;
+  font-weight: 750;
+}
+
 .quick-entry-panel button {
   padding: 13px 16px;
 }
@@ -1874,6 +2148,7 @@ body {
   position: absolute;
   pointer-events: none;
   z-index: 1;
+  display: none;
 }
 
 .window {
@@ -1961,8 +2236,14 @@ body {
   }
 
   .brand,
+  .header-status,
   .nav-links {
     justify-self: center;
+  }
+
+  .header-status {
+    width: min(100%, 720px);
+    justify-content: center;
   }
 
   .grid {
@@ -1971,7 +2252,10 @@ body {
   }
 
   .insight-grid,
-  .overview-insights {
+  .overview-insights,
+  .milestone-list,
+  .detail-grid,
+  .talk-grid {
     grid-template-columns: 1fr;
     margin-inline: 0;
   }
@@ -1981,6 +2265,9 @@ body {
   .health-hero,
   .onboarding-hero,
   .profile-hero,
+  .principle-detail-hero,
+  .talk-hero,
+  .reflection-panel,
   .checkups-hero,
   .quick-entry-panel,
   .auth-panel,
@@ -2022,8 +2309,13 @@ body {
 
   .health-page,
   .onboarding-page,
-  .profile-page {
+  .profile-page,
+  .principle-detail-page,
+  .talk-page,
+  .reflection-panel,
+  .milestone-panel {
     padding-inline: 0;
+    margin-inline: 0;
   }
 
   .profile-link-grid {
@@ -2069,6 +2361,22 @@ body {
 
   .brand {
     min-width: 0;
+  }
+
+  .header-status {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: stretch;
+  }
+
+  .status-pill {
+    flex: 1 1 160px;
+    max-width: none;
+  }
+
+  .header-signout {
+    flex: 1 1 100%;
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .nav-links {
@@ -2139,7 +2447,10 @@ body {
   .health-summary-grid,
   .health-check,
   .onboarding-step,
-  .profile-link-grid {
+  .profile-link-grid,
+  .milestone-list,
+  .detail-grid,
+  .talk-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2152,7 +2463,8 @@ body {
   .health-actions button,
   .onboarding-actions button,
   .copy-id-row button,
-  .profile-form > button {
+  .profile-form > button,
+  .reflection-actions button {
     width: 100%;
   }
 

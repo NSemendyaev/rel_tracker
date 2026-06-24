@@ -1,16 +1,34 @@
-# React + Vite
+# Purrfect Relationship Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Purrfect is a private relationship check-in app for couples. Partners submit daily, weekly, and monthly check-ups from their own accounts, then review shared scores, history, milestones, reflection prompts, and conversation topics.
 
-Currently, two official plugins are available:
+## Documentation
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- [User Guide](./USER_GUIDE.md): how to use the app and what each feature does.
+- [Supabase Setup](./SUPABASE_SETUP.md): database/auth setup for shared couple accounts.
 
-## React Compiler
+## Development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Install dependencies:
 
-## Expanding the ESLint configuration
+```bash
+npm install
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Run the local dev server:
+
+```bash
+npm run dev
+```
+
+Build for production:
+
+```bash
+npm run build
+```
+
+Run lint:
+
+```bash
+npm run lint
+```

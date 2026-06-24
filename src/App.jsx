@@ -57,6 +57,12 @@ const getFriendlyError = (error, fallback = 'Something went wrong. Please try ag
   return message || fallback
 }
 
+const isPeriodWindowSchemaCacheError = (error) => {
+  const message = error?.message ?? String(error ?? '')
+
+  return message.includes('period_window') && message.includes('schema cache')
+}
+
 const people = {
   me: { id: 'me', label: 'Me', possessive: 'My' },
   partner: { id: 'partner', label: 'Partner', possessive: "Partner's" },
@@ -72,6 +78,7 @@ const navItems = [
   { id: 'overview', label: 'Overview' },
   { id: 'checkups', label: 'Check-ups' },
   { id: 'history', label: 'History' },
+  { id: 'talk', label: 'Talk' },
   { id: 'profile', label: 'Profile' },
   { id: 'health', label: 'Health' },
 ]
@@ -502,6 +509,7 @@ const getSavedState = () => {
     responses: makeCoupleResponses(),
     notes: makeCoupleNotes(),
     history: [],
+    discussionItems: [],
   }
 
   try {
@@ -517,6 +525,7 @@ const getSavedState = () => {
       responses: normalizeCoupleResponses(savedState.responses),
       notes: normalizeCoupleNotes(savedState.notes),
       history: normalizeHistory(savedState.history),
+      discussionItems: normalizeDiscussionItems(savedState.discussionItems),
     }
   } catch {
     return fallback
@@ -572,6 +581,119 @@ const getLargestGap = (scores) => {
     .sort((a, b) => b.gap - a.gap)[0]
 }
 
+const promptLibrary = {
+  recognition: {
+    prompt: 'What is one effort from this week that you wish I noticed more clearly?',
+    action: 'Name one specific thing you appreciated before the next check-in.',
+  },
+  acceptance: {
+    prompt: 'Where did you feel most able, or least able, to be yourself with me?',
+    action: 'Ask one curious question before giving advice or correction.',
+  },
+  stability: {
+    prompt: 'What moment felt emotionally predictable, and what moment felt shaky?',
+    action: 'Agree on one calming repair phrase to use during tension.',
+  },
+  initiative: {
+    prompt: 'Where did effort feel balanced, and where did one person carry too much?',
+    action: 'Let each person choose one small act of care to initiate this period.',
+  },
+  intimacy: {
+    prompt: 'What feeling have you been holding that you would like me to understand better?',
+    action: 'Make ten uninterrupted minutes for a no-fixing, just-listening conversation.',
+  },
+  safety: {
+    prompt: 'What helped you feel safe recently, and what boundary needs more respect?',
+    action: 'Repeat one boundary or need back in your own words before responding.',
+  },
+}
+
+const getLowestPrinciple = (principleScores) => (
+  principles
+    .map((principle) => ({ ...principle, score: principleScores[principle.id] ?? 100 }))
+    .sort((a, b) => a.score - b.score)[0]
+)
+
+const createReflection = (entry, scores, partnerLabel = people.partner.label) => {
+  const lowest = getLowestPrinciple(entry.principleScores)
+  const largestGap = getLargestGap(scores)
+  const prompt = promptLibrary[lowest.id]
+
+  return {
+    id: `reflection-${entry.id}`,
+    action: prompt.action,
+    createdAt: entry.createdAt,
+    entryId: entry.id,
+    gapDetail: `${largestGap.title}: Me ${largestGap.meScore}/100, ${partnerLabel} ${largestGap.partnerScore}/100.`,
+    lowestPrinciple: lowest,
+    periodLabel: entry.periodLabel,
+    prompt: prompt.prompt,
+    title: `${lowest.title} needs the gentlest attention right now.`,
+  }
+}
+
+const createDiscussionItem = (reflection) => ({
+  id: `talk-${reflection.entryId}`,
+  action: reflection.action,
+  createdAt: reflection.createdAt,
+  principleId: reflection.lowestPrinciple.id,
+  principleTitle: reflection.lowestPrinciple.title,
+  prompt: reflection.prompt,
+  resolved: false,
+  source: reflection.periodLabel,
+})
+
+const normalizeDiscussionItems = (items) => {
+  if (!Array.isArray(items)) {
+    return []
+  }
+
+  return items.map((item) => ({
+    ...item,
+    resolved: Boolean(item.resolved),
+  }))
+}
+
+const getMilestones = (history) => {
+  const dailyWindows = new Set(history.filter((entry) => entry.period === 'daily').map((entry) => entry.periodWindow ?? entry.createdAt?.slice(0, 10)))
+  const weeklyEntries = history.filter((entry) => entry.period === 'weekly')
+  const monthlyEntries = history.filter((entry) => entry.period === 'monthly')
+  const latest = history[0]
+  const previousSamePerson = latest && history.find((entry) => (
+    entry.person === latest.person && entry.period === latest.period && entry.id !== latest.id
+  ))
+
+  return [
+    {
+      done: history.length > 0,
+      title: 'First check-up submitted',
+      detail: history.length > 0 ? 'The shared history has begun.' : 'Submit any check-up to start the record.',
+    },
+    {
+      done: dailyWindows.size >= 1 && ['me', 'partner'].every((person) => history.some((entry) => entry.period === 'daily' && entry.person === person)),
+      title: 'Both partners shared a daily check-in',
+      detail: 'A small daily rhythm makes mismatches easier to spot.',
+    },
+    {
+      done: weeklyEntries.length >= 2,
+      title: 'Weekly pattern started',
+      detail: weeklyEntries.length >= 2 ? 'You have enough weekly entries to compare patterns.' : 'Two weekly entries unlock a clearer pattern.',
+    },
+    {
+      done: monthlyEntries.length >= 2,
+      title: 'First monthly review cycle',
+      detail: monthlyEntries.length >= 2 ? 'Monthly reflection is becoming part of the relationship rhythm.' : 'Monthly reviews carry the heaviest score weight.',
+    },
+    {
+      done: Boolean(latest && previousSamePerson && latest.overallScore > previousSamePerson.overallScore),
+      title: 'Improvement spotted',
+      detail: latest && previousSamePerson && latest.overallScore > previousSamePerson.overallScore
+        ? `${latest.personLabel}'s ${latest.periodLabel} improved by ${latest.overallScore - previousSamePerson.overallScore} points.`
+        : 'Submit repeated check-ups to reveal improvement.',
+    },
+  ]
+}
+
 const PersonSwitch = ({ activePerson, onChange }) => (
   <div className="person-switch" aria-label="Current perspective">
     {Object.values(people).map((person) => (
@@ -587,7 +709,7 @@ const PersonSwitch = ({ activePerson, onChange }) => (
   </div>
 )
 
-const PrincipleCard = ({ principle, coupleScore, meScore, partnerScore, partnerLabel = people.partner.label }) => {
+const PrincipleCard = ({ onOpen, principle, coupleScore, meScore, partnerScore, partnerLabel = people.partner.label }) => {
   const gap = Math.abs(meScore - partnerScore)
 
   return (
@@ -634,12 +756,56 @@ const PrincipleCard = ({ principle, coupleScore, meScore, partnerScore, partnerL
           <span>{partnerLabel} <b>{partnerScore}</b></span>
           <span>Gap <b>{gap}</b></span>
         </div>
+        <button className="card-detail-button" type="button" onClick={() => onOpen(principle.id)}>
+          View detail
+        </button>
       </div>
     </article>
   )
 }
 
-const Overview = ({ scores, history, partnerLabel = people.partner.label, setActivePage }) => {
+const MilestonesPanel = ({ history }) => (
+  <section className="milestone-panel" aria-label="Relationship milestones">
+    <div className="history-heading">
+      <span className="eyebrow">Milestones</span>
+      <strong>{getMilestones(history).filter((milestone) => milestone.done).length}/5 reached</strong>
+    </div>
+    <div className="milestone-list">
+      {getMilestones(history).map((milestone) => (
+        <article className={milestone.done ? 'milestone done' : 'milestone'} key={milestone.title}>
+          <span>{milestone.done ? 'Done' : 'Next'}</span>
+          <strong>{milestone.title}</strong>
+          <p>{milestone.detail}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+)
+
+const ReflectionPanel = ({ onAddToTalk, onClose, reflection }) => {
+  if (!reflection) {
+    return null
+  }
+
+  return (
+    <section className="reflection-panel">
+      <div>
+        <span className="eyebrow">After-submit reflection</span>
+        <h2>{reflection.title}</h2>
+        <p>{reflection.lowestPrinciple.title} scored {reflection.lowestPrinciple.score}/100 in this submission.</p>
+        <p><strong>Conversation:</strong> {reflection.prompt}</p>
+        <p><strong>Small action:</strong> {reflection.action}</p>
+        <small>{reflection.gapDetail}</small>
+      </div>
+      <div className="reflection-actions">
+        <button type="button" onClick={() => onAddToTalk(reflection)}>Add to Talk queue</button>
+        <button className="secondary-button" type="button" onClick={onClose}>Dismiss</button>
+      </div>
+    </section>
+  )
+}
+
+const Overview = ({ onOpenPrinciple, scores, history, partnerLabel = people.partner.label, setActivePage }) => {
   const latestEntries = history.slice(0, 4)
   const trend = getTrendSummary(history)
   const latestEntry = history[0]
@@ -725,9 +891,12 @@ const Overview = ({ scores, history, partnerLabel = people.partner.label, setAct
         </button>
       </section>
 
+      <MilestonesPanel history={history} />
+
       <div className="grid">
         {principles.map((principle) => (
           <PrincipleCard
+            onOpen={onOpenPrinciple}
             principle={principle}
             coupleScore={scores.couple.principleScores[principle.id]}
             meScore={scores.me.principleScores[principle.id]}
@@ -979,6 +1148,116 @@ const HistoryPage = ({ history, setActivePage }) => {
             )}
           </section>
         ))}
+      </div>
+    </section>
+  )
+}
+
+const PrincipleDetailPage = ({ history, onAddPrompt, partnerLabel, principle, scores, setActivePage }) => {
+  const entries = history
+    .filter((entry) => entry.principleScores?.[principle.id] !== undefined)
+    .slice(0, 8)
+  const prompt = promptLibrary[principle.id]
+  const meScore = scores.me.principleScores[principle.id]
+  const partnerScore = scores.partner.principleScores[principle.id]
+  const gap = Math.abs(meScore - partnerScore)
+
+  return (
+    <section className="principle-detail-page">
+      <header className={`principle-detail-hero card-${principle.tone}`}>
+        <div>
+          <span className="eyebrow">Principle detail</span>
+          <h1>{principle.title}</h1>
+          <p>{principle.meaning}</p>
+        </div>
+        <div className="principle-detail-score">
+          <span>Couple score</span>
+          <strong>{scores.couple.principleScores[principle.id]}/100</strong>
+          <small>Gap {gap} points</small>
+        </div>
+      </header>
+
+      <section className="detail-grid">
+        <article className="detail-card">
+          <span className="eyebrow">Comparison</span>
+          <h2>Me {meScore}/100 · {partnerLabel} {partnerScore}/100</h2>
+          <p>{gap >= 15 ? 'This is a meaningful mismatch worth discussing gently.' : 'This principle looks relatively aligned right now.'}</p>
+        </article>
+        <article className="detail-card">
+          <span className="eyebrow">Talk prompt</span>
+          <h2>{prompt.prompt}</h2>
+          <p>{prompt.action}</p>
+          <button type="button" onClick={() => onAddPrompt(principle.id)}>Add to Talk queue</button>
+        </article>
+      </section>
+
+      <section className="detail-card">
+        <div className="history-heading">
+          <span className="eyebrow">Recent notes and scores</span>
+          <button type="button" onClick={() => setActivePage('overview')}>Back to overview</button>
+        </div>
+        {entries.length > 0 ? (
+          <div className="detail-entry-list">
+            {entries.map((entry) => (
+              <article key={entry.id}>
+                <strong>{entry.personLabel} · {entry.periodLabel} · {entry.principleScores[principle.id]}/100</strong>
+                <span>{formatDate(entry.createdAt)}</span>
+                {entry.note && <p>{entry.note}</p>}
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p>No submitted notes for this principle yet.</p>
+        )}
+      </section>
+    </section>
+  )
+}
+
+const TalkQueuePage = ({ items, onResolveItem, onReopenItem, setActivePage }) => {
+  const openItems = items.filter((item) => !item.resolved)
+  const resolvedItems = items.filter((item) => item.resolved)
+
+  return (
+    <section className="talk-page">
+      <header className="talk-hero">
+        <div>
+          <span className="eyebrow">Talk about this</span>
+          <h1>Conversation Queue</h1>
+          <p>Prompts from reflections and principle details live here until you mark them discussed.</p>
+        </div>
+        <button type="button" onClick={() => setActivePage('overview')}>Back to overview</button>
+      </header>
+
+      <div className="talk-grid">
+        <section className="talk-column">
+          <div className="history-heading">
+            <span className="eyebrow">Open</span>
+            <strong>{openItems.length}</strong>
+          </div>
+          {openItems.length > 0 ? openItems.map((item) => (
+            <article className="talk-card" key={item.id}>
+              <span>{item.principleTitle} · {item.source}</span>
+              <h2>{item.prompt}</h2>
+              <p>{item.action}</p>
+              <button type="button" onClick={() => onResolveItem(item.id)}>Mark discussed</button>
+            </article>
+          )) : <p className="empty-talk">No open prompts. Add one from a reflection or principle page.</p>}
+        </section>
+
+        <section className="talk-column">
+          <div className="history-heading">
+            <span className="eyebrow">Discussed</span>
+            <strong>{resolvedItems.length}</strong>
+          </div>
+          {resolvedItems.length > 0 ? resolvedItems.map((item) => (
+            <article className="talk-card resolved" key={item.id}>
+              <span>{item.principleTitle}</span>
+              <h2>{item.prompt}</h2>
+              <button type="button" onClick={() => onReopenItem(item.id)}>Reopen</button>
+            </article>
+          )) : <p className="empty-talk">Resolved prompts will appear here.</p>}
+        </section>
       </div>
     </section>
   )
@@ -1437,6 +1716,35 @@ const AuthPanel = ({ session, onSignOut }) => {
   )
 }
 
+const HeaderStatus = ({
+  couple,
+  hasPartner,
+  onSignOut,
+  partnerProfile,
+  profile,
+  requests,
+  session,
+  setActivePage,
+}) => {
+  const displayName = profile?.display_name || session?.user?.email || 'Signed in'
+  const partnerLabel = partnerProfile?.display_name || partnerProfile?.email || people.partner.label
+  const pendingCount = requests.length
+
+  return (
+    <div className="header-status" aria-label="Account and couple status">
+      <button className="status-pill user-pill" type="button" onClick={() => setActivePage('profile')}>
+        <span>Signed in</span>
+        <strong>{displayName}</strong>
+      </button>
+      <button className="status-pill couple-pill" type="button" onClick={() => setActivePage('overview')}>
+        <span>{hasPartner ? 'Connected couple' : pendingCount > 0 ? `${pendingCount} pending` : 'Setup needed'}</span>
+        <strong>{hasPartner ? partnerLabel : couple ? `Code ${couple.invite_code}` : 'Find partner'}</strong>
+      </button>
+      <button className="header-signout" type="button" onClick={onSignOut}>Sign out</button>
+    </div>
+  )
+}
+
 const CoupleRequestList = ({ requests, onAcceptRequest, onCancelRequest, onRejectRequest }) => {
   const incoming = requests.filter((request) => request.direction === 'incoming')
   const outgoing = requests.filter((request) => request.direction === 'outgoing')
@@ -1479,130 +1787,16 @@ const CoupleRequestList = ({ requests, onAcceptRequest, onCancelRequest, onRejec
   )
 }
 
-const CouplePanel = ({
-  session,
-  couple,
-  hasPartner,
-  partnerProfile,
-  requests,
-  onAcceptRequest,
-  onCancelRequest,
-  onCreateCouple,
-  onFindPartner,
-  onJoinCouple,
-  onRejectRequest,
-  onSendCoupleRequest,
-}) => {
-  const [inviteCode, setInviteCode] = useState('')
-  const [partnerQuery, setPartnerQuery] = useState('')
-  const [foundPartnerProfile, setFoundPartnerProfile] = useState(null)
-
-  if (!isSupabaseConfigured || !session) {
-    return null
-  }
-
-  if (couple) {
-    const partnerLabel = partnerProfile?.display_name || partnerProfile?.email || people.partner.label
-
-    return (
-      <section className="couple-panel">
-        <div>
-          <span className="eyebrow">{hasPartner ? 'Connected couple' : 'Couple workspace'}</span>
-          <h2>{hasPartner ? `Connected with ${partnerLabel}` : `Invite code: ${couple.invite_code}`}</h2>
-          <p>
-            {hasPartner
-              ? `Live updates are on. You submit as yourself, and ${partnerLabel} submits from their account.`
-              : 'Add your partner before check-ups unlock. They can join by code, or you can look them up after they register.'}
-          </p>
-        </div>
-        {hasPartner && (
-          <div className="partner-status">
-            <span>Partner</span>
-            <strong>{partnerLabel}</strong>
-            <small>Invite code {couple.invite_code}</small>
-          </div>
-        )}
-        {!hasPartner && (
-          <div className="couple-actions">
-            <label>
-              <span>Invite code</span>
-              <input
-                value={inviteCode}
-                onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
-                placeholder="AB12CD34"
-              />
-            </label>
-            <button type="button" onClick={() => onJoinCouple(inviteCode)}>Join</button>
-          </div>
-        )}
-      </section>
-    )
-  }
-
-  return (
-    <section className="couple-panel">
-      <div>
-        <span className="eyebrow">Couple workspace</span>
-        <h2>Send a couple request or join by code.</h2>
-        <p>Search by your partner's user ID or email after they register. They will accept or reject the request from their account.</p>
-      </div>
-      <div className="couple-actions">
-        <label>
-          <span>Partner ID or email</span>
-          <input
-              className="wide-input"
-              value={partnerQuery}
-              onChange={(event) => {
-                setPartnerQuery(event.target.value)
-                setFoundPartnerProfile(null)
-              }}
-              placeholder="uuid or email"
-            />
-        </label>
-        <button
-          type="button"
-          onClick={async () => {
-            const profile = await onFindPartner(partnerQuery)
-            setFoundPartnerProfile(profile)
-          }}
-        >
-          Look up
-        </button>
-        {foundPartnerProfile && (
-          <button type="button" onClick={() => onSendCoupleRequest(foundPartnerProfile.id)}>
-            Send request to {foundPartnerProfile.display_name || foundPartnerProfile.email}
-          </button>
-        )}
-        <button type="button" onClick={() => onCreateCouple()}>
-          Create invite code
-        </button>
-        <label>
-          <span>Invite code</span>
-          <input
-            value={inviteCode}
-            onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
-            placeholder="AB12CD34"
-          />
-        </label>
-        <button type="button" onClick={() => onJoinCouple(inviteCode)}>Join</button>
-      </div>
-      <CoupleRequestList
-        requests={requests}
-        onAcceptRequest={onAcceptRequest}
-        onCancelRequest={onCancelRequest}
-        onRejectRequest={onRejectRequest}
-      />
-    </section>
-  )
-}
-
 function App() {
   const [savedState] = useState(getSavedState)
   const [activePage, setActivePage] = useState('overview')
+  const [selectedPrincipleId, setSelectedPrincipleId] = useState(principles[0].id)
   const [activePerson, setActivePerson] = useState('me')
   const [responses, setResponses] = useState(savedState.responses)
   const [notes, setNotes] = useState(savedState.notes)
   const [history, setHistory] = useState(savedState.history)
+  const [discussionItems, setDiscussionItems] = useState(savedState.discussionItems)
+  const [lastReflection, setLastReflection] = useState(null)
   const [session, setSession] = useState(null)
   const [profile, setProfile] = useState(null)
   const [profileExtras, setProfileExtras] = useState({ bio: '', social_links: {} })
@@ -1773,11 +1967,11 @@ function App() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(storageKey, JSON.stringify({ responses, notes, history }))
+      window.localStorage.setItem(storageKey, JSON.stringify({ responses, notes, history, discussionItems }))
     } catch {
       // Storage is a convenience layer. The app should remain usable without it.
     }
-  }, [responses, notes, history])
+  }, [responses, notes, history, discussionItems])
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -2456,6 +2650,49 @@ function App() {
     }))
   }
 
+  const addDiscussionItem = (item) => {
+    setDiscussionItems((current) => {
+      if (current.some((existing) => existing.id === item.id)) {
+        return current
+      }
+
+      return [item, ...current].slice(0, 24)
+    })
+  }
+
+  const handleAddReflectionToTalk = (reflection) => {
+    addDiscussionItem(createDiscussionItem(reflection))
+    setStatusMessage('Added to the Talk queue.')
+  }
+
+  const handleAddPrinciplePrompt = (principleId) => {
+    const principle = principles.find((item) => item.id === principleId) ?? principles[0]
+    const prompt = promptLibrary[principle.id]
+
+    addDiscussionItem({
+      id: `talk-${principle.id}-${Date.now()}`,
+      action: prompt.action,
+      createdAt: new Date().toISOString(),
+      principleId: principle.id,
+      principleTitle: principle.title,
+      prompt: prompt.prompt,
+      resolved: false,
+      source: 'Principle detail',
+    })
+    setStatusMessage('Added to the Talk queue.')
+  }
+
+  const handleOpenPrinciple = (principleId) => {
+    setSelectedPrincipleId(principleId)
+    setActivePage('principle')
+  }
+
+  const updateDiscussionItem = (itemId, resolved) => {
+    setDiscussionItems((current) => current.map((item) => (
+      item.id === itemId ? { ...item, resolved } : item
+    )))
+  }
+
   const handleSave = async (period, person) => {
     const availability = getPeriodAvailability(period, history, person)
 
@@ -2486,7 +2723,7 @@ function App() {
       try {
         setStatusMessage('')
 
-        const { error } = await supabase.from('checkup_submissions').insert({
+        const submissionPayload = {
           couple_id: couple.id,
           user_id: session.user.id,
           period,
@@ -2495,14 +2732,31 @@ function App() {
           responses: nextEntry.responses,
           principle_scores: nextEntry.principleScores,
           overall_score: nextEntry.overallScore,
-        })
+        }
+
+        const { error } = await supabase.from('checkup_submissions').insert(submissionPayload)
 
         if (error) {
-          throw error
+          if (!isPeriodWindowSchemaCacheError(error)) {
+            throw error
+          }
+
+          const legacyPayload = { ...submissionPayload }
+          delete legacyPayload.period_window
+          const { error: legacyError } = await supabase.from('checkup_submissions').insert(legacyPayload)
+
+          if (legacyError) {
+            throw legacyError
+          }
         }
 
         await loadRemoteHistory(couple, session)
-        setStatusMessage('Submitted to your couple workspace.')
+        const reflection = createReflection(nextEntry, scores, partnerLabel)
+        setLastReflection(reflection)
+        addDiscussionItem(createDiscussionItem(reflection))
+        setStatusMessage(error
+          ? 'Submitted. Run the latest supabase-schema.sql soon so once-per-window limits are enforced by the database.'
+          : 'Submitted to your couple workspace.')
         return
       } catch (error) {
         setStatusMessage(getFriendlyError(error, 'Could not submit this check-up.'))
@@ -2510,10 +2764,17 @@ function App() {
       }
     }
 
-    setHistory((current) => [
-      nextEntry,
-      ...current,
-    ].slice(0, 48))
+    setHistory((current) => {
+      const nextHistory = [
+        nextEntry,
+        ...current,
+      ].slice(0, 48)
+      const nextScores = calculateSubmittedCoupleScores(nextHistory)
+      const reflection = createReflection(nextEntry, nextScores, partnerLabel)
+      setLastReflection(reflection)
+      addDiscussionItem(createDiscussionItem(reflection))
+      return nextHistory
+    })
   }
 
   const handleReset = (period, person) => {
@@ -2570,6 +2831,19 @@ function App() {
             </span>
           </button>
 
+          {isSupabaseConfigured && session && (
+            <HeaderStatus
+              couple={couple}
+              hasPartner={hasPartner}
+              onSignOut={handleSignOut}
+              partnerProfile={partnerProfile}
+              profile={profile}
+              requests={coupleRequests}
+              session={session}
+              setActivePage={setActivePage}
+            />
+          )}
+
           <div className="nav-links" aria-label="Dashboard sections">
             {navItems.map((item) => (
               <button
@@ -2586,29 +2860,20 @@ function App() {
 
         </nav>
 
-        <AuthPanel
-          session={session}
-          onSignOut={handleSignOut}
-        />
-
-        {!shouldGateRemoteApp && (
-          <CouplePanel
+        {!isSupabaseConfigured && (
+          <AuthPanel
             session={session}
-            couple={couple}
-            hasPartner={hasPartner}
-            partnerProfile={partnerProfile}
-            requests={coupleRequests}
-            onAcceptRequest={handleAcceptRequest}
-            onCancelRequest={handleCancelRequest}
-            onCreateCouple={handleCreateCouple}
-            onFindPartner={handleFindPartner}
-            onJoinCouple={handleJoinCouple}
-            onRejectRequest={handleRejectRequest}
-            onSendCoupleRequest={handleSendCoupleRequest}
+            onSignOut={handleSignOut}
           />
         )}
 
         {statusMessage && <p className="status-message">{statusMessage}</p>}
+
+        <ReflectionPanel
+          reflection={lastReflection}
+          onAddToTalk={handleAddReflectionToTalk}
+          onClose={() => setLastReflection(null)}
+        />
 
         {activePage === 'health' ? (
           <HealthPage
@@ -2628,6 +2893,22 @@ function App() {
             profileExtras={profileExtras}
             session={session}
             onSaveProfile={handleSaveProfile}
+          />
+        ) : activePage === 'talk' ? (
+          <TalkQueuePage
+            items={discussionItems}
+            onReopenItem={(itemId) => updateDiscussionItem(itemId, false)}
+            onResolveItem={(itemId) => updateDiscussionItem(itemId, true)}
+            setActivePage={setActivePage}
+          />
+        ) : activePage === 'principle' ? (
+          <PrincipleDetailPage
+            history={history}
+            onAddPrompt={handleAddPrinciplePrompt}
+            partnerLabel={partnerLabel}
+            principle={principles.find((principle) => principle.id === selectedPrincipleId) ?? principles[0]}
+            scores={scores}
+            setActivePage={setActivePage}
           />
         ) : shouldGateRemoteApp ? (
           <OnboardingPage
@@ -2649,6 +2930,7 @@ function App() {
           />
         ) : activePage === 'overview' ? (
           <Overview
+            onOpenPrinciple={handleOpenPrinciple}
             scores={scores}
             history={history}
             partnerLabel={partnerLabel}
