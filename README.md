@@ -6,6 +6,7 @@ Purrfect is a private relationship check-in app for couples. Partners submit dai
 
 - [User Guide](./USER_GUIDE.md): how to use the app and what each feature does.
 - [Supabase Setup](./SUPABASE_SETUP.md): database/auth setup for shared couple accounts.
+- [Deployment Guide](./DEPLOYMENT.md): production deployment and smoke-test checklist.
 
 ## Development
 

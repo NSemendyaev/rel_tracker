@@ -139,6 +139,9 @@ It includes:
 - Your score
 - Partner score
 - Largest gap between partners
+- What to notice from your partner's latest signal
+- A repair suggestion for the most important mismatch
+- The next open check-up rhythm
 - Trend summary
 - Recent shared history
 - Milestones
@@ -185,6 +188,12 @@ It shows:
 
 You can add the prompt to the Talk queue.
 
+Principle detail prompts are adaptive. The app chooses a prompt from the principle's prompt bank based on the current couple score:
+
+- Low scores use repair and safety-first prompts
+- Medium scores use understanding and clarification prompts
+- High scores use maintenance and appreciation prompts
+
 ## History
 
 The **History** page shows submitted check-ups grouped by:
@@ -218,6 +227,14 @@ This is meant to turn a score into a gentle next step.
 
 The reflection can be added to the Talk queue.
 
+Reflection prompts use the same adaptive prompt bank. The app finds the lowest-scoring principle from the submitted check-up, checks its score band, and chooses a matching prompt.
+
+## Privacy Model
+
+Check-up drafts stay private. Your partner does not see slider movement, unfinished notes, or reset changes.
+
+Your partner sees a check-up only after you submit it. Submitted check-ups update Overview, History, principle detail pages, and the shared Talk prompts.
+
 ## Talk Queue
 
 The **Talk** page stores discussion prompts.
@@ -234,9 +251,34 @@ Each Talk item includes:
 - Conversation prompt
 - Suggested action
 
-You can mark prompts as discussed or reopen them later.
+Talk items can move through:
 
-The Talk queue is currently stored locally in your browser.
+- Open
+- Scheduled
+- Needs another talk
+- Resolved
+
+Use **Needs another talk** when a topic was discussed but still feels unfinished.
+
+For connected couples, the Talk queue is shared through Supabase so both partners can see and resolve the same prompts. In local prototype mode, it is stored in the browser.
+
+## Reminders
+
+The Check-ups page and Reminders page show which rhythms are open now:
+
+- Daily opens once per day
+- Weekly opens once per week
+- Monthly opens once per month
+
+After a check-up is submitted, the app shows when that rhythm opens again.
+
+The **Reminders** page also lets you:
+
+- Turn browser reminders on or off
+- Choose which cadences should nudge you
+- Jump directly to check-ups when something is open
+
+Browser reminders are local to the current browser. They are useful while the app is allowed to send notifications, but they are not email reminders yet.
 
 ## Milestones
 
@@ -252,23 +294,17 @@ Examples:
 
 Milestones are meant to make progress visible, not to pressure either partner.
 
-## Health Page
+## Setup Checks
 
-The **Health** page checks whether the app is configured and functioning correctly.
+If something feels broken, first confirm:
 
-It checks:
+- The latest `supabase-schema.sql` has been run.
+- Both users refreshed the app after the schema update.
+- Both users are signed into separate accounts.
+- Both users are connected to the same couple workspace.
+- The failed action was retried after a refresh.
 
-- Supabase environment configuration
-- Login session
-- Profile table access
-- Couple request table access
-- Accept request function
-- Realtime connection
-- Couple workspace status
-- Partner connection
-- Check-up submission readiness
-
-If something feels broken, run Health first. It often explains whether the issue is login, database setup, missing schema, RLS, or partner connection.
+In local development, the **QA** page is available as a guided two-user test checklist. It is hidden from production navigation.
 
 ## Realtime Updates
 
@@ -279,6 +315,7 @@ This means:
 - Pending requests can appear without refreshing.
 - Accepted requests can unlock the dashboard automatically.
 - Partner submissions can update Overview and History.
+- Shared Talk prompts can appear and update for both partners.
 
 Realtime depends on the Supabase schema being applied correctly.
 
@@ -313,7 +350,7 @@ Check:
 - Both users are connected as a couple.
 - The submission was saved successfully.
 - The partner refreshed or realtime is working.
-- Health page passes the relevant checks.
+- The latest Supabase schema has been run.
 
 ### The Overview score did not change while moving sliders
 
@@ -333,17 +370,38 @@ For a new couple:
 8. Open the Talk page and discuss one prompt.
 9. Repeat daily, weekly, and monthly.
 
+## Two-User QA Checklist
+
+Use the **QA** page in the app after schema changes or major feature work.
+
+Recommended test:
+
+1. Run the latest `supabase-schema.sql`.
+2. Open User A in one browser and User B in another browser or private window.
+3. Set a display name for both users.
+4. Have User A find User B by email or ID.
+5. Send a couple request from User A.
+6. Accept the request from User B.
+7. Confirm both users can access the dashboard.
+8. Submit a Daily check-up from User A.
+9. Confirm User B sees it in Overview and History.
+10. Submit a Daily check-up from User B.
+11. Confirm scores, gaps, and adaptive prompts update for both users.
+12. Add a Talk prompt, move it through Scheduled, Needs another talk, and Resolved.
+13. Enable Reminders and confirm cadence settings persist after refresh.
+
+If something fails, record the user, page, action, visible message, and whether refreshing changes the result.
+
 ## Current Limitations
 
 Some data is still local to the browser:
 
 - Draft answers
-- Profile bio/social links
-- Talk queue
 
-Submitted check-ups, couple membership, requests, and display names are stored in Supabase.
+Submitted check-ups, couple membership, requests, display names, and profile details are stored in Supabase after the latest schema is applied.
+For connected couples, Talk queue items are also stored in Supabase.
 
-Future improvements could move the Talk queue and full profile details into Supabase so they sync across devices.
+If the latest schema has not been run yet, optional profile details and richer Talk states may fall back locally until Supabase is updated.
 
 ## Best Way To Use The App
 
@@ -354,4 +412,3 @@ Use the app as a gentle ritual:
 - Monthly: review the deeper relationship picture.
 
 Do not treat a low score as failure. Treat it as a signal: “This deserves care.”
-

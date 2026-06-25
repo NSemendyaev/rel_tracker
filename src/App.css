@@ -15,6 +15,10 @@ body {
   background: #fff7fb;
 }
 
+p {
+  text-align: justify;
+}
+
 .page {
   position: relative;
   min-height: 100vh;
@@ -59,7 +63,7 @@ body {
 
 .navbar {
   display: grid;
-  grid-template-columns: auto minmax(220px, 0.72fr) minmax(360px, 1fr);
+  grid-template-columns: auto max-content minmax(360px, 1fr);
   align-items: center;
   gap: 12px;
   margin: 0 auto 26px;
@@ -74,9 +78,9 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   text-decoration: none;
-  min-width: 214px;
+  min-width: 220px;
 }
 
 .brand-button {
@@ -90,71 +94,53 @@ body {
 
 .brand strong {
   display: block;
-  color: #ff85b8;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.75rem, 2.4vw, 2.25rem);
-  font-style: italic;
-  line-height: 0.9;
+  color: #ffffff;
+  font-size: 1.28rem;
+  font-weight: 950;
+  letter-spacing: 0.01em;
+  line-height: 1;
 }
 
 .brand small {
   display: block;
-  margin-top: 3px;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 0.86rem;
+  margin-top: 5px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .paw {
   position: relative;
+  display: grid;
+  place-items: center;
   width: 42px;
-  height: 38px;
+  height: 42px;
   flex: 0 0 auto;
-}
-
-.paw::after,
-.paw span {
-  content: "";
-  position: absolute;
-  display: block;
-  background: #ff85b8;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 68% 28%, rgba(255, 255, 255, 0.36) 0 7%, transparent 8%),
+    linear-gradient(135deg, #ff85b8, #9a5bd2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 10px 24px rgba(255, 133, 184, 0.22);
 }
 
 .paw::after {
-  left: 8px;
-  bottom: 0;
-  width: 27px;
-  height: 22px;
-  border-radius: 56% 56% 46% 46%;
+  content: "";
+  display: block;
+  width: 17px;
+  height: 17px;
+  border: 3px solid #151240;
+  border-top-color: transparent;
+  border-left-color: transparent;
+  border-radius: 50%;
+  transform: rotate(45deg);
 }
 
 .paw span {
-  width: 11px;
-  height: 15px;
-  border-radius: 999px;
-}
-
-.paw span:nth-child(1) {
-  left: 0;
-  top: 15px;
-  transform: rotate(-28deg);
-}
-
-.paw span:nth-child(2) {
-  left: 11px;
-  top: 2px;
-  transform: rotate(-10deg);
-}
-
-.paw span:nth-child(3) {
-  right: 11px;
-  top: 2px;
-  transform: rotate(10deg);
-}
-
-.paw span:nth-child(4) {
-  right: 0;
-  top: 15px;
-  transform: rotate(28deg);
+  display: none;
 }
 
 .nav-links {
@@ -174,8 +160,11 @@ body {
   display: flex;
   align-items: center;
   gap: 7px;
+  justify-self: start;
+  width: max-content;
+  max-width: 100%;
   min-width: 0;
-  padding: 5px;
+  padding: 4px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.055);
@@ -192,8 +181,8 @@ body {
   display: grid;
   gap: 2px;
   min-width: 0;
-  max-width: 190px;
-  padding: 8px 11px;
+  max-width: 150px;
+  padding: 7px 9px;
   border-radius: 14px;
   color: #ffffff;
   text-align: left;
@@ -228,8 +217,8 @@ body {
 
 .header-signout {
   flex: 0 0 auto;
-  min-height: 38px;
-  padding: 0 11px;
+  min-height: 34px;
+  padding: 0 9px;
   border-radius: 13px;
   color: rgba(255, 255, 255, 0.78);
   font-size: 0.84rem;
@@ -273,8 +262,7 @@ body {
 
 .auth-panel,
 .couple-panel,
-.setup-gate,
-.status-message {
+.setup-gate {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
@@ -304,8 +292,7 @@ body {
 
 .auth-panel p,
 .couple-panel p,
-.setup-gate p,
-.status-message {
+.setup-gate p {
   color: #2a234c;
   font-weight: 700;
   line-height: 1.42;
@@ -350,6 +337,387 @@ body {
   cursor: pointer;
   padding: 13px 16px;
   white-space: nowrap;
+}
+
+.partner-dashboard,
+.checkup-rhythm-panel,
+.onboarding-progress {
+  display: grid;
+  gap: 14px;
+  margin: 0 clamp(4px, 4vw, 74px) 16px;
+}
+
+.reminders-page {
+  padding: 0 clamp(4px, 4vw, 74px);
+}
+
+.qa-page {
+  padding: 0 clamp(4px, 4vw, 74px);
+}
+
+.partner-dashboard {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(280px, 0.9fr);
+}
+
+.checkup-rhythm-panel {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-inline: 0;
+}
+
+.checkup-rhythm-panel article {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.checkup-rhythm-panel .eyebrow {
+  display: block;
+  margin: 0;
+  line-height: 1;
+}
+
+.checkup-rhythm-panel strong {
+  display: block;
+  color: #151240;
+  font-size: clamp(1.05rem, 1.4vw, 1.34rem);
+  line-height: 1.08;
+  text-align: right;
+}
+
+.onboarding-progress {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-inline: 0;
+}
+
+.partner-focus-card,
+.reminder-card,
+.reminders-hero,
+.qa-hero,
+.reminder-status-card,
+.reminder-settings-card,
+.reminder-timeline,
+.next-action-card,
+.qa-warning-card,
+.qa-card,
+.checkup-rhythm-panel article,
+.onboarding-progress article,
+.empty-state {
+  padding: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.68);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(255, 244, 249, 0.64)),
+    radial-gradient(circle at 96% 10%, rgba(255, 133, 184, 0.18), transparent 34%);
+  box-shadow: 0 18px 42px rgba(54, 30, 74, 0.12);
+}
+
+.repair-card {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(246, 240, 255, 0.68)),
+    radial-gradient(circle at 92% 12%, rgba(154, 91, 210, 0.18), transparent 34%);
+}
+
+.partner-focus-card h2,
+.reminder-card h2,
+.reminders-hero h1,
+.qa-hero h1,
+.reminder-settings-card h2,
+.reminder-timeline h2,
+.next-action-card h2,
+.qa-warning-card h2,
+.qa-card h2,
+.empty-state h2 {
+  margin: 8px 0 10px;
+  color: #151240;
+  font-size: clamp(1.35rem, 2vw, 2rem);
+  line-height: 1.05;
+}
+
+.partner-focus-card p,
+.reminder-card p,
+.reminders-hero p,
+.qa-hero p,
+.reminder-status-card p,
+.reminder-settings-card p,
+.reminder-timeline p,
+.next-action-card p,
+.qa-warning-card p,
+.qa-card p,
+.checkup-rhythm-panel p,
+.onboarding-progress p,
+.empty-state p {
+  margin: 0;
+  color: #2a234c;
+  font-weight: 720;
+  line-height: 1.45;
+}
+
+.partner-focus-card small {
+  display: block;
+  margin-bottom: 12px;
+  color: #7e294f;
+  font-weight: 900;
+}
+
+.repair-script {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0;
+  padding: 13px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.repair-script strong,
+.checkup-rhythm-panel strong,
+.onboarding-progress strong {
+  color: #151240;
+  font-weight: 950;
+}
+
+.repair-script span {
+  color: #4a4168;
+  font-weight: 760;
+  line-height: 1.38;
+}
+
+.partner-focus-card button,
+.reminder-card button,
+.reminder-settings-card button,
+.reminder-timeline button,
+.next-action-card button,
+.qa-hero button,
+.empty-state button {
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  font: inherit;
+  font-weight: 900;
+  background: linear-gradient(135deg, #e94689, #9a5bd2);
+  cursor: pointer;
+  padding: 11px 13px;
+}
+
+.reminders-hero,
+.qa-hero,
+.next-action-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.44fr);
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.reminders-hero h1 {
+  font-size: clamp(2.4rem, 5vw, 4.8rem);
+}
+
+.qa-hero h1 {
+  font-size: clamp(2.4rem, 5vw, 4.8rem);
+}
+
+.qa-warning-card {
+  margin-bottom: 16px;
+}
+
+.qa-checklist {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.qa-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+}
+
+.qa-step-number {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  color: #fff;
+  font-weight: 950;
+  background: linear-gradient(135deg, #e94689, #9a5bd2);
+}
+
+.qa-card h2 {
+  margin-top: 0;
+}
+
+.qa-card ol {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding-left: 22px;
+  color: #2a234c;
+  font-weight: 760;
+  line-height: 1.42;
+}
+
+.qa-expected {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.qa-expected strong {
+  color: #151240;
+}
+
+.reminder-status-card {
+  display: grid;
+  gap: 8px;
+  background: rgba(21, 18, 64, 0.92);
+}
+
+.reminder-status-card strong {
+  color: #ffb4d1;
+  font-size: 1.35rem;
+}
+
+.reminder-status-card p {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.reminder-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.reminder-settings-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.reminder-settings-card small {
+  color: #8f2356;
+  font-weight: 850;
+}
+
+.reminder-settings-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.reminder-toggle-list {
+  display: grid;
+  gap: 10px;
+}
+
+.reminder-toggle-list label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.reminder-toggle-list input {
+  width: 20px;
+  height: 20px;
+  accent-color: #e94689;
+}
+
+.reminder-toggle-list span {
+  display: grid;
+  gap: 3px;
+}
+
+.reminder-toggle-list strong {
+  color: #151240;
+}
+
+.reminder-toggle-list small {
+  color: #4a4168;
+}
+
+.reminder-timeline {
+  margin-bottom: 16px;
+}
+
+.reminder-timeline-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.reminder-timeline-grid article {
+  display: grid;
+  gap: 9px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.reminder-timeline-grid article.open {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(255, 242, 249, 0.72)),
+    radial-gradient(circle at 92% 12%, rgba(255, 133, 184, 0.2), transparent 34%);
+  box-shadow: inset 0 0 0 2px rgba(233, 70, 137, 0.14);
+}
+
+.reminder-timeline-grid span,
+.onboarding-progress span {
+  color: #d92d78;
+  font-size: 0.74rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.reminder-timeline-grid small {
+  color: #7e294f;
+  font-weight: 850;
+}
+
+.next-action-card {
+  margin-bottom: 16px;
+}
+
+.reminder-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.reminder-list span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  color: #4a4168;
+  font-weight: 850;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.reminder-list span.open,
+.checkup-rhythm-panel article.open,
+.onboarding-progress article.done {
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: inset 0 0 0 2px rgba(255, 133, 184, 0.2);
+}
+
+.reminder-list b {
+  color: #d92d78;
+}
+
+.wide-empty-state {
+  margin: 0 clamp(4px, 4vw, 74px) 16px;
+}
+
+.empty-state button {
+  margin-top: 14px;
 }
 
 .auth-landing-page {
@@ -583,10 +951,43 @@ body {
   font-size: 1.12rem;
 }
 
-.status-message {
-  display: block;
-  margin-top: -6px;
-  color: #7e294f;
+.toast-message {
+  position: fixed;
+  right: clamp(14px, 3vw, 28px);
+  bottom: clamp(14px, 3vw, 28px);
+  z-index: 50;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  width: min(420px, calc(100vw - 28px));
+  padding: 15px 16px;
+  border: 2px solid rgba(255, 255, 255, 0.76);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(255, 242, 249, 0.9)),
+    radial-gradient(circle at 96% 8%, rgba(154, 91, 210, 0.16), transparent 36%);
+  box-shadow: 0 22px 52px rgba(54, 30, 74, 0.22);
+}
+
+.toast-message p {
+  margin: 0;
+  color: #2a234c;
+  font-weight: 820;
+  line-height: 1.42;
+  text-align: left;
+}
+
+.toast-message button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 10px;
+  color: #151240;
+  font: inherit;
+  font-weight: 950;
+  background: rgba(21, 18, 64, 0.08);
+  cursor: pointer;
 }
 
 .health-page {
@@ -1644,6 +2045,10 @@ body {
   margin-bottom: 14px;
 }
 
+.talk-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .detail-card,
 .talk-column {
   padding: 18px;
@@ -1670,9 +2075,41 @@ body {
   opacity: 0.68;
 }
 
-.empty-talk {
+.talk-card small {
+  color: #7e294f;
+  font-weight: 850;
+}
+
+.talk-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.talk-card-actions button {
+  flex: 1 1 120px;
+  padding: 9px 10px;
+  font-size: 0.84rem;
+}
+
+.empty-talk,
+.empty-talk p {
   color: #2a234c;
   font-weight: 750;
+}
+
+.empty-talk {
+  display: grid;
+  gap: 10px;
+}
+
+.empty-talk p {
+  margin: 0;
+}
+
+.empty-talk button {
+  justify-self: start;
 }
 
 .quick-entry-panel button {
@@ -2254,6 +2691,15 @@ body {
   .insight-grid,
   .overview-insights,
   .milestone-list,
+  .partner-dashboard,
+  .checkup-rhythm-panel,
+  .onboarding-progress,
+  .reminders-hero,
+  .qa-hero,
+  .qa-card,
+  .reminder-settings-grid,
+  .reminder-timeline-grid,
+  .next-action-card,
   .detail-grid,
   .talk-grid {
     grid-template-columns: 1fr;
@@ -2447,6 +2893,15 @@ body {
   .health-summary-grid,
   .health-check,
   .onboarding-step,
+  .partner-dashboard,
+  .checkup-rhythm-panel,
+  .onboarding-progress,
+  .reminders-hero,
+  .qa-hero,
+  .qa-card,
+  .reminder-settings-grid,
+  .reminder-timeline-grid,
+  .next-action-card,
   .profile-link-grid,
   .milestone-list,
   .detail-grid,
@@ -2463,6 +2918,10 @@ body {
   .health-actions button,
   .onboarding-actions button,
   .copy-id-row button,
+  .reminder-settings-card button,
+  .reminder-timeline button,
+  .next-action-card button,
+  .qa-hero button,
   .profile-form > button,
   .reflection-actions button {
     width: 100%;
@@ -2476,6 +2935,8 @@ body {
   .checkup-hero h1,
   .history-hero h1,
   .health-hero h1,
+  .reminders-hero h1,
+  .qa-hero h1,
   .onboarding-hero h1,
   .profile-hero h1,
   .checkups-hero h1 {

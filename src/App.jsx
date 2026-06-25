@@ -4,7 +4,8 @@ import dashboard from './assets/dashboard.png'
 import { isSupabaseConfigured, supabase } from './supabaseClient'
 
 const storageKey = 'purrfect-relationship-tracker'
-const getInviteCode = () => Math.random().toString(36).slice(2, 10).toUpperCase()
+const reminderPrefsKey = 'purrfect-reminder-preferences'
+const reminderSeenKey = 'purrfect-reminder-seen'
 const getProfileExtrasKey = (userId) => `purrfect-profile-extras-${userId}`
 
 const getFriendlyError = (error, fallback = 'Something went wrong. Please try again.') => {
@@ -12,6 +13,22 @@ const getFriendlyError = (error, fallback = 'Something went wrong. Please try ag
 
   if (message.includes('duplicate key') && message.includes('couple_members')) {
     return 'You have already joined this couple workspace.'
+  }
+
+  if (message.includes('already connected to a couple workspace')) {
+    return 'This account is already connected to a couple workspace.'
+  }
+
+  if (message.includes('already has two members')) {
+    return 'That couple workspace already has two members.'
+  }
+
+  if (message.includes('Invite code was not found')) {
+    return 'No couple found with that invite code.'
+  }
+
+  if (message.includes('Both users are already connected')) {
+    return 'Both users are already connected to couple workspaces.'
   }
 
   if (message.includes('one_checkup_submission_per_window')) {
@@ -27,7 +44,7 @@ const getFriendlyError = (error, fallback = 'Something went wrong. Please try ag
   }
 
   if (message.includes('profiles.bio') || message.includes('profiles.social_links')) {
-    return 'The app was trying to read old profile fields. Refresh the page to load the latest version.'
+    return 'Optional profile details need the latest Supabase schema. Run supabase-schema.sql, then refresh this app.'
   }
 
   if (message.includes('Couple request was not found')) {
@@ -40,6 +57,10 @@ const getFriendlyError = (error, fallback = 'Something went wrong. Please try ag
 
   if (message.includes("Could not find the table 'public.couple_requests'")) {
     return 'The couple request table is missing in Supabase. Run the latest supabase-schema.sql in the Supabase SQL editor, then refresh this app.'
+  }
+
+  if (message.includes("Could not find the table 'public.talk_items'")) {
+    return 'The shared Talk queue table is missing in Supabase. Run the latest supabase-schema.sql in the Supabase SQL editor, then refresh this app.'
   }
 
   if (message.includes('schema cache')) {
@@ -56,6 +77,10 @@ const getFriendlyError = (error, fallback = 'Something went wrong. Please try ag
 
   return message || fallback
 }
+
+const isMissingTalkItemsTableError = (error) => (
+  error?.message?.includes("Could not find the table 'public.talk_items'")
+)
 
 const isPeriodWindowSchemaCacheError = (error) => {
   const message = error?.message ?? String(error ?? '')
@@ -79,8 +104,9 @@ const navItems = [
   { id: 'checkups', label: 'Check-ups' },
   { id: 'history', label: 'History' },
   { id: 'talk', label: 'Talk' },
+  { id: 'reminders', label: 'Reminders' },
   { id: 'profile', label: 'Profile' },
-  { id: 'health', label: 'Health' },
+  { id: 'qa', label: 'QA', devOnly: true },
 ]
 
 const principles = [
@@ -244,6 +270,12 @@ const questionSets = {
 
 const ratingLabels = ['Hardly', 'A little', 'Somewhat', 'Mostly', 'Very much']
 const maxRating = 5
+const defaultReminderPreferences = {
+  enabled: false,
+  daily: true,
+  weekly: true,
+  monthly: true,
+}
 
 const formatDate = (dateValue) => (
   new Intl.DateTimeFormat('en', {
@@ -252,6 +284,38 @@ const formatDate = (dateValue) => (
     year: 'numeric',
   }).format(new Date(dateValue))
 )
+
+const formatDateTime = (dateValue) => (
+  new Intl.DateTimeFormat('en', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(dateValue))
+)
+
+const getStoredReminderPreferences = () => {
+  try {
+    return {
+      ...defaultReminderPreferences,
+      ...JSON.parse(window.localStorage.getItem(reminderPrefsKey)),
+    }
+  } catch {
+    return defaultReminderPreferences
+  }
+}
+
+const getSeenReminderIds = () => {
+  try {
+    return JSON.parse(window.localStorage.getItem(reminderSeenKey)) ?? []
+  } catch {
+    return []
+  }
+}
+
+const saveSeenReminderIds = (ids) => {
+  window.localStorage.setItem(reminderSeenKey, JSON.stringify(ids.slice(-60)))
+}
 
 const getWeekStart = (date) => {
   const weekStart = new Date(date)
@@ -581,31 +645,225 @@ const getLargestGap = (scores) => {
     .sort((a, b) => b.gap - a.gap)[0]
 }
 
-const promptLibrary = {
+const promptBank = {
   recognition: {
-    prompt: 'What is one effort from this week that you wish I noticed more clearly?',
-    action: 'Name one specific thing you appreciated before the next check-in.',
+    low: [
+      {
+        prompt: 'What effort felt invisible or taken for granted recently?',
+        action: 'Name one specific contribution and thank your partner for it without adding a request.',
+      },
+      {
+        prompt: 'Where did you need appreciation and not receive it?',
+        action: 'Ask what kind of recognition would have landed best in that moment.',
+      },
+    ],
+    medium: [
+      {
+        prompt: 'What is one effort from this week that you wish I noticed more clearly?',
+        action: 'Name one specific thing you appreciated before the next check-in.',
+      },
+      {
+        prompt: 'Which kind of appreciation feels most meaningful right now: words, help, time, or affection?',
+        action: 'Offer appreciation in the form your partner names.',
+      },
+    ],
+    high: [
+      {
+        prompt: 'What made you feel especially seen lately?',
+        action: 'Repeat that behavior once this week on purpose.',
+      },
+      {
+        prompt: 'What recognition habit should we keep because it is working?',
+        action: 'Turn that habit into a small weekly ritual.',
+      },
+    ],
   },
   acceptance: {
-    prompt: 'Where did you feel most able, or least able, to be yourself with me?',
-    action: 'Ask one curious question before giving advice or correction.',
+    low: [
+      {
+        prompt: 'Where did you feel judged, corrected, or pressured to be different?',
+        action: 'Listen for the feeling first, then ask what acceptance would have looked like.',
+      },
+      {
+        prompt: 'What part of yourself felt hardest to bring into the relationship recently?',
+        action: 'Respond with one sentence of acceptance before asking any follow-up question.',
+      },
+    ],
+    medium: [
+      {
+        prompt: 'Where did you feel most able, or least able, to be yourself with me?',
+        action: 'Ask one curious question before giving advice or correction.',
+      },
+      {
+        prompt: 'What difference between us needs more patience?',
+        action: 'Name one way to make room for that difference this week.',
+      },
+    ],
+    high: [
+      {
+        prompt: 'What helped you feel accepted as you are?',
+        action: 'Protect that behavior when conversations get tense.',
+      },
+      {
+        prompt: 'Where are we giving each other room to grow without pressure?',
+        action: 'Acknowledge one growth effort without turning it into a demand.',
+      },
+    ],
   },
   stability: {
-    prompt: 'What moment felt emotionally predictable, and what moment felt shaky?',
-    action: 'Agree on one calming repair phrase to use during tension.',
+    low: [
+      {
+        prompt: 'What recent moment made the relationship feel unpredictable or emotionally unsafe?',
+        action: 'Agree on one pause phrase to use before either person escalates.',
+      },
+      {
+        prompt: 'Where did conflict feel bigger than the issue itself?',
+        action: 'Choose one repair step to use within 24 hours after tension.',
+      },
+    ],
+    medium: [
+      {
+        prompt: 'What moment felt emotionally predictable, and what moment felt shaky?',
+        action: 'Agree on one calming repair phrase to use during tension.',
+      },
+      {
+        prompt: 'What pattern keeps returning when one of us is stressed?',
+        action: 'Name the pattern together without blaming either person.',
+      },
+    ],
+    high: [
+      {
+        prompt: 'What helped the relationship feel steady lately?',
+        action: 'Keep one stabilizing routine unchanged this week.',
+      },
+      {
+        prompt: 'How did we recover well from a difficult moment?',
+        action: 'Thank your partner for one specific repair behavior.',
+      },
+    ],
   },
   initiative: {
-    prompt: 'Where did effort feel balanced, and where did one person carry too much?',
-    action: 'Let each person choose one small act of care to initiate this period.',
+    low: [
+      {
+        prompt: 'Where did one person feel like they were carrying the relationship alone?',
+        action: 'Each person chooses one concrete task or gesture to own this week.',
+      },
+      {
+        prompt: 'What effort are you tired of having to ask for?',
+        action: 'Turn one repeated request into a shared agreement.',
+      },
+    ],
+    medium: [
+      {
+        prompt: 'Where did effort feel balanced, and where did one person carry too much?',
+        action: 'Let each person choose one small act of care to initiate this period.',
+      },
+      {
+        prompt: 'What would make effort feel more mutual this week?',
+        action: 'Pick one plan, chore, or emotional check-in to initiate without prompting.',
+      },
+    ],
+    high: [
+      {
+        prompt: 'What initiative from your partner mattered most lately?',
+        action: 'Notice and reinforce that effort directly.',
+      },
+      {
+        prompt: 'What shared effort rhythm is working well?',
+        action: 'Keep that rhythm and add only one small improvement.',
+      },
+    ],
   },
   intimacy: {
-    prompt: 'What feeling have you been holding that you would like me to understand better?',
-    action: 'Make ten uninterrupted minutes for a no-fixing, just-listening conversation.',
+    low: [
+      {
+        prompt: 'What feeling have you been keeping private because it did not feel safe to share?',
+        action: 'Make ten uninterrupted minutes for listening without fixing or defending.',
+      },
+      {
+        prompt: 'Where did you feel emotionally alone inside the relationship?',
+        action: 'Ask what kind of presence would have helped.',
+      },
+    ],
+    medium: [
+      {
+        prompt: 'What feeling have you been holding that you would like me to understand better?',
+        action: 'Make ten uninterrupted minutes for a no-fixing, just-listening conversation.',
+      },
+      {
+        prompt: 'What topic do we keep near the surface that needs a little more honesty?',
+        action: 'Share one feeling using “I felt...” instead of explaining the whole case.',
+      },
+    ],
+    high: [
+      {
+        prompt: 'What helped you feel emotionally close recently?',
+        action: 'Repeat one closeness-building moment intentionally.',
+      },
+      {
+        prompt: 'What vulnerability did we handle well?',
+        action: 'Name why it felt safe, so you can protect that pattern.',
+      },
+    ],
   },
   safety: {
-    prompt: 'What helped you feel safe recently, and what boundary needs more respect?',
-    action: 'Repeat one boundary or need back in your own words before responding.',
+    low: [
+      {
+        prompt: 'What boundary or need felt least respected recently?',
+        action: 'Repeat the boundary back clearly and agree on one practical protection.',
+      },
+      {
+        prompt: 'Where did you feel you had to protect yourself instead of relax?',
+        action: 'Pause problem-solving and ask what would help them feel safer first.',
+      },
+    ],
+    medium: [
+      {
+        prompt: 'What helped you feel safe recently, and what boundary needs more respect?',
+        action: 'Repeat one boundary or need back in your own words before responding.',
+      },
+      {
+        prompt: 'What situation needs clearer expectations so both people feel secure?',
+        action: 'Write one simple agreement and revisit it after the next check-in.',
+      },
+    ],
+    high: [
+      {
+        prompt: 'What made the relationship feel safe to return to lately?',
+        action: 'Protect that behavior during the next stressful moment.',
+      },
+      {
+        prompt: 'Which boundary or agreement is working well?',
+        action: 'Acknowledge it and keep it consistent.',
+      },
+    ],
   },
+}
+
+const getScoreBand = (score = 100) => {
+  if (score <= 45) {
+    return 'low'
+  }
+
+  if (score <= 75) {
+    return 'medium'
+  }
+
+  return 'high'
+}
+
+const getAdaptivePrompt = (principleId, score = 100, contextKey = '') => {
+  const bank = promptBank[principleId] ?? promptBank.recognition
+  const band = getScoreBand(score)
+  const prompts = bank[band] ?? bank.medium
+  const seed = String(contextKey || `${principleId}-${band}-${score}`)
+    .split('')
+    .reduce((total, char) => total + char.charCodeAt(0), 0)
+
+  return {
+    ...prompts[seed % prompts.length],
+    band,
+  }
 }
 
 const getLowestPrinciple = (principleScores) => (
@@ -617,7 +875,7 @@ const getLowestPrinciple = (principleScores) => (
 const createReflection = (entry, scores, partnerLabel = people.partner.label) => {
   const lowest = getLowestPrinciple(entry.principleScores)
   const largestGap = getLargestGap(scores)
-  const prompt = promptLibrary[lowest.id]
+  const prompt = getAdaptivePrompt(lowest.id, lowest.score, `${entry.id}-${entry.period}`)
 
   return {
     id: `reflection-${entry.id}`,
@@ -628,6 +886,7 @@ const createReflection = (entry, scores, partnerLabel = people.partner.label) =>
     lowestPrinciple: lowest,
     periodLabel: entry.periodLabel,
     prompt: prompt.prompt,
+    promptBand: prompt.band,
     title: `${lowest.title} needs the gentlest attention right now.`,
   }
 }
@@ -641,6 +900,23 @@ const createDiscussionItem = (reflection) => ({
   prompt: reflection.prompt,
   resolved: false,
   source: reflection.periodLabel,
+  status: 'open',
+})
+
+const mapTalkItemRow = (row) => ({
+  id: row.id,
+  action: row.action ?? '',
+  createdAt: row.created_at,
+  createdBy: row.created_by,
+  note: row.note ?? '',
+  principleId: row.principle_id,
+  principleTitle: row.principle_title,
+  prompt: row.prompt,
+  resolved: Boolean(row.resolved),
+  resolvedAt: row.resolved_at,
+  scheduledFor: row.scheduled_for,
+  source: row.source,
+  status: row.status ?? (row.resolved ? 'resolved' : 'open'),
 })
 
 const normalizeDiscussionItems = (items) => {
@@ -651,8 +927,157 @@ const normalizeDiscussionItems = (items) => {
   return items.map((item) => ({
     ...item,
     resolved: Boolean(item.resolved),
+    status: item.status ?? (item.resolved ? 'resolved' : 'open'),
   }))
 }
+
+const getPartnerFocus = (history, scores, partnerLabel = people.partner.label) => {
+  const partnerEntry = history.find((entry) => entry.person === 'partner')
+  const partnerLowest = getLowestPrinciple(scores.partner.principleScores)
+  const prompt = getAdaptivePrompt(partnerLowest.id, partnerLowest.score, `partner-${partnerEntry?.id ?? 'empty'}`)
+  const previousPartnerEntry = partnerEntry && history.find((entry) => (
+    entry.person === 'partner'
+    && entry.period === partnerEntry.period
+    && entry.id !== partnerEntry.id
+  ))
+  const delta = partnerEntry && previousPartnerEntry
+    ? partnerEntry.overallScore - previousPartnerEntry.overallScore
+    : null
+
+  if (!partnerEntry) {
+    return {
+      title: `${partnerLabel}'s first check-up is the missing piece.`,
+      detail: 'Once your partner submits, this space will show what they most want you to notice.',
+      prompt: 'Invite your partner to submit their first daily check-up.',
+      action: 'Use the setup card to confirm they are connected, then ask them to share one quick check-in.',
+      principleId: partnerLowest.id,
+      principleTitle: partnerLowest.title,
+    }
+  }
+
+  return {
+    title: `${partnerLabel}'s latest signal is ${partnerLowest.title}.`,
+    detail: `${partnerEntry.periodLabel} saved on ${formatDate(partnerEntry.createdAt)} at ${partnerEntry.overallScore}/100${delta === null ? '.' : ` (${delta >= 0 ? '+' : ''}${delta} from their previous ${partnerEntry.periodLabel}).`}`,
+    prompt: prompt.prompt,
+    action: prompt.action,
+    principleId: partnerLowest.id,
+    principleTitle: partnerLowest.title,
+  }
+}
+
+const getRepairSuggestion = (scores, history, partnerLabel = people.partner.label) => {
+  const largestGap = getLargestGap(scores)
+  const lowestCouple = getLowestPrinciple(scores.couple.principleScores)
+  const focus = largestGap.gap >= 12 ? largestGap : lowestCouple
+  const focusScore = largestGap.gap >= 12
+    ? Math.min(largestGap.meScore, largestGap.partnerScore)
+    : focus.score
+  const prompt = getAdaptivePrompt(focus.id, focusScore, `repair-${focus.id}-${focusScore}-${history[0]?.id ?? 'none'}`)
+  const latestDip = history.find((entry, index) => {
+    const previous = history.slice(index + 1).find((candidate) => (
+      candidate.person === entry.person && candidate.period === entry.period
+    ))
+    return previous && entry.overallScore <= previous.overallScore - 8
+  })
+
+  return {
+    title: largestGap.gap >= 12 ? `${focus.title} needs alignment.` : `${focus.title} needs gentle care.`,
+    detail: largestGap.gap >= 12
+      ? `You are ${largestGap.gap} points apart here. Try to understand the difference before solving it.`
+      : `This is the lowest shared principle right now. A small repair is better than waiting for a big talk.`,
+    prompt: latestDip
+      ? `${latestDip.personLabel}'s ${latestDip.periodLabel} recently dropped. What changed for them?`
+      : prompt.prompt,
+    action: largestGap.gap >= 12
+      ? `Each person names one need in ${focus.title}; the other repeats it back before responding.`
+      : prompt.action,
+    principleId: focus.id,
+    principleTitle: focus.title,
+    meta: largestGap.gap >= 12 ? `Me ${largestGap.meScore}/100, ${partnerLabel} ${largestGap.partnerScore}/100` : `Couple score ${focus.score}/100`,
+  }
+}
+
+const getReminderItems = (history, person = 'me') => (
+  Object.keys(questionSets).map((period) => {
+    const availability = getPeriodAvailability(period, history, person)
+    const lastEntry = history.find((entry) => entry.period === period && entry.person === person)
+
+    return {
+      period,
+      title: questionSets[period].title,
+      due: availability.isSubmitted ? availability.end : new Date(),
+      end: availability.end,
+      isOpen: !availability.isSubmitted,
+      lastSubmittedAt: lastEntry?.createdAt ?? null,
+      notificationId: `${period}-${availability.windowKey}`,
+      windowKey: availability.windowKey,
+      detail: availability.isSubmitted
+        ? `Submitted. Opens again ${formatDate(availability.end)}.`
+        : `Open now. Submit before ${formatDate(availability.end)}.`,
+    }
+  })
+)
+
+const getReminderSummary = (reminders, preferences) => {
+  const enabledOpenReminders = reminders.filter((item) => item.isOpen && preferences[item.period])
+  const nextLockedReminder = reminders
+    .filter((item) => !item.isOpen && preferences[item.period])
+    .sort((a, b) => new Date(a.due) - new Date(b.due))[0]
+
+  if (!preferences.enabled) {
+    return {
+      title: 'Reminders are off',
+      detail: 'Turn them on when you want the app to nudge you about open check-ups.',
+    }
+  }
+
+  if (enabledOpenReminders.length > 0) {
+    return {
+      title: `${enabledOpenReminders.length} check-up${enabledOpenReminders.length === 1 ? '' : 's'} open now`,
+      detail: enabledOpenReminders.map((item) => item.title.replace(' check-up', '')).join(', '),
+    }
+  }
+
+  if (nextLockedReminder) {
+    return {
+      title: 'Nothing open right now',
+      detail: `Next enabled rhythm opens ${formatDateTime(nextLockedReminder.due)}.`,
+    }
+  }
+
+  return {
+    title: 'No rhythms selected',
+    detail: 'Choose at least one cadence to receive reminders.',
+  }
+}
+
+const getOnboardingProgress = ({ couple, hasPartner, history, profile }) => [
+  {
+    done: Boolean(profile?.display_name),
+    title: 'Set your display name',
+    detail: 'Your partner sees this name instead of just an email address.',
+  },
+  {
+    done: Boolean(couple),
+    title: 'Create or join a couple space',
+    detail: 'This gives both accounts one shared workspace.',
+  },
+  {
+    done: hasPartner,
+    title: 'Connect both partners',
+    detail: 'Check-ups unlock after both people are connected.',
+  },
+  {
+    done: history.some((entry) => entry.person === 'me'),
+    title: 'Submit your first check-up',
+    detail: 'Your partner can only see submitted answers, never drafts.',
+  },
+  {
+    done: history.some((entry) => entry.person === 'partner'),
+    title: 'Read your partner’s first signal',
+    detail: 'The Overview becomes more useful once both sides have shared.',
+  },
+]
 
 const getMilestones = (history) => {
   const dailyWindows = new Set(history.filter((entry) => entry.period === 'daily').map((entry) => entry.periodWindow ?? entry.createdAt?.slice(0, 10)))
@@ -805,11 +1230,15 @@ const ReflectionPanel = ({ onAddToTalk, onClose, reflection }) => {
   )
 }
 
-const Overview = ({ onOpenPrinciple, scores, history, partnerLabel = people.partner.label, setActivePage }) => {
+const Overview = ({ onAddPrompt, onOpenPrinciple, scores, history, partnerLabel = people.partner.label, setActivePage }) => {
   const latestEntries = history.slice(0, 4)
   const trend = getTrendSummary(history)
   const latestEntry = history[0]
   const largestGap = getLargestGap(scores)
+  const partnerFocus = getPartnerFocus(history, scores, partnerLabel)
+  const repairSuggestion = getRepairSuggestion(scores, history, partnerLabel)
+  const reminders = getReminderItems(history, 'me')
+  const openReminder = reminders.find((item) => item.isOpen) ?? reminders[0]
 
   return (
     <>
@@ -838,6 +1267,62 @@ const Overview = ({ onOpenPrinciple, scores, history, partnerLabel = people.part
           </div>
         </div>
       </section>
+
+      <section className="partner-dashboard" aria-label="Partner guidance">
+        <article className="partner-focus-card">
+          <span className="eyebrow">What to notice</span>
+          <h2>{partnerFocus.title}</h2>
+          <p>{partnerFocus.detail}</p>
+          <div className="repair-script">
+            <strong>Ask gently</strong>
+            <span>{partnerFocus.prompt}</span>
+          </div>
+          <button type="button" onClick={() => onAddPrompt(partnerFocus.principleId)}>
+            Add this to Talk
+          </button>
+        </article>
+
+        <article className="partner-focus-card repair-card">
+          <span className="eyebrow">Repair suggestion</span>
+          <h2>{repairSuggestion.title}</h2>
+          <p>{repairSuggestion.detail}</p>
+          <small>{repairSuggestion.meta}</small>
+          <div className="repair-script">
+            <strong>Try this</strong>
+            <span>{repairSuggestion.action}</span>
+          </div>
+          <button type="button" onClick={() => onAddPrompt(repairSuggestion.principleId)}>
+            Save repair prompt
+          </button>
+        </article>
+
+        <article className="reminder-card">
+          <span className="eyebrow">Next rhythm</span>
+          <h2>{openReminder.isOpen ? `${openReminder.title} is open` : 'Next check-up is scheduled'}</h2>
+          <p>{openReminder.detail}</p>
+          <div className="reminder-list">
+            {reminders.map((item) => (
+              <span className={item.isOpen ? 'open' : ''} key={item.period}>
+                {item.title.replace(' check-up', '')}
+                <b>{item.isOpen ? 'Open' : formatDate(item.due)}</b>
+              </span>
+            ))}
+          </div>
+          <button type="button" onClick={() => setActivePage('reminders')}>Manage reminders</button>
+        </article>
+      </section>
+
+      {history.length === 0 && (
+        <section className="empty-state wide-empty-state">
+          <span className="eyebrow">Start here</span>
+          <h2>No shared check-ups yet.</h2>
+          <p>
+            Submit your first daily check-up to replace the starter 100/100 baseline with real feelings.
+            Your partner will see only submitted answers.
+          </p>
+          <button type="button" onClick={() => setActivePage('checkups')}>Submit first check-up</button>
+        </section>
+      )}
 
       <section className="insight-grid overview-insights" aria-label="Relationship trends">
         <article className={`insight-card trend-${trend.direction}`}>
@@ -913,6 +1398,7 @@ const Overview = ({ onOpenPrinciple, scores, history, partnerLabel = people.part
 const CheckupsPage = (props) => {
   const [selectedPeriod, setSelectedPeriod] = useState('daily')
   const { activePerson, responsesByPerson, notesByPerson, history, canSwitchPerson } = props
+  const reminders = getReminderItems(history, activePerson)
 
   return (
     <section className="checkups-page">
@@ -947,6 +1433,21 @@ const CheckupsPage = (props) => {
           ))}
         </div>
       </header>
+
+      <section className="checkup-rhythm-panel">
+        <article>
+          <span className="eyebrow">Privacy</span>
+          <strong>Drafts stay private</strong>
+          <p>Your partner sees submitted check-ups only. Slider changes and unfinished notes are not shared.</p>
+        </article>
+        {reminders.map((item) => (
+          <article className={item.isOpen ? 'open' : ''} key={item.period}>
+            <span className="eyebrow">{item.isOpen ? 'Open now' : 'Locked'}</span>
+            <strong>{item.title}</strong>
+            <p>{item.detail}</p>
+          </article>
+        ))}
+      </section>
 
       <SurveyPage
         {...props}
@@ -1140,7 +1641,14 @@ const HistoryPage = ({ history, setActivePage }) => {
               </div>
             ) : (
               <div className="empty-history">
-                <p>No saved {title.toLowerCase()} entries yet.</p>
+                <strong>No saved {title.toLowerCase()} entries yet.</strong>
+                <p>
+                  {period === 'daily'
+                    ? 'Start with a small pulse check. It takes the least effort and helps the Overview stop relying on the starter baseline.'
+                    : period === 'weekly'
+                      ? 'Weekly entries reveal patterns that daily moods can hide.'
+                      : 'Monthly entries carry the most score weight and are best for deeper review.'}
+                </p>
                 <button type="button" onClick={() => setActivePage('checkups')}>
                   Start {title}
                 </button>
@@ -1157,9 +1665,10 @@ const PrincipleDetailPage = ({ history, onAddPrompt, partnerLabel, principle, sc
   const entries = history
     .filter((entry) => entry.principleScores?.[principle.id] !== undefined)
     .slice(0, 8)
-  const prompt = promptLibrary[principle.id]
   const meScore = scores.me.principleScores[principle.id]
   const partnerScore = scores.partner.principleScores[principle.id]
+  const coupleScore = scores.couple.principleScores[principle.id]
+  const prompt = getAdaptivePrompt(principle.id, coupleScore, `detail-${principle.id}-${coupleScore}`)
   const gap = Math.abs(meScore - partnerScore)
 
   return (
@@ -1184,7 +1693,7 @@ const PrincipleDetailPage = ({ history, onAddPrompt, partnerLabel, principle, sc
           <p>{gap >= 15 ? 'This is a meaningful mismatch worth discussing gently.' : 'This principle looks relatively aligned right now.'}</p>
         </article>
         <article className="detail-card">
-          <span className="eyebrow">Talk prompt</span>
+          <span className="eyebrow">Adaptive talk prompt · {prompt.band} score</span>
           <h2>{prompt.prompt}</h2>
           <p>{prompt.action}</p>
           <button type="button" onClick={() => onAddPrompt(principle.id)}>Add to Talk queue</button>
@@ -1214,9 +1723,39 @@ const PrincipleDetailPage = ({ history, onAddPrompt, partnerLabel, principle, sc
   )
 }
 
-const TalkQueuePage = ({ items, onResolveItem, onReopenItem, setActivePage }) => {
-  const openItems = items.filter((item) => !item.resolved)
-  const resolvedItems = items.filter((item) => item.resolved)
+const TalkQueuePage = ({ items, onUpdateItem, setActivePage }) => {
+  const groupedItems = {
+    open: items.filter((item) => item.status === 'open' && !item.resolved),
+    scheduled: items.filter((item) => item.status === 'scheduled' && !item.resolved),
+    followup: items.filter((item) => item.status === 'followup' && !item.resolved),
+    resolved: items.filter((item) => item.resolved || item.status === 'resolved'),
+  }
+  const columns = [
+    {
+      id: 'open',
+      eyebrow: 'Open',
+      empty: 'No open prompts yet. Submit a check-up, use an Overview repair suggestion, or open a principle detail to add one.',
+      items: groupedItems.open,
+    },
+    {
+      id: 'scheduled',
+      eyebrow: 'Scheduled',
+      empty: 'Prompts you schedule for a real conversation will appear here.',
+      items: groupedItems.scheduled,
+    },
+    {
+      id: 'followup',
+      eyebrow: 'Needs another talk',
+      empty: 'Use this when a topic was discussed but still feels unfinished.',
+      items: groupedItems.followup,
+    },
+    {
+      id: 'resolved',
+      eyebrow: 'Resolved',
+      empty: 'Resolved prompts will appear here.',
+      items: groupedItems.resolved,
+    },
+  ]
 
   return (
     <section className="talk-page">
@@ -1230,38 +1769,267 @@ const TalkQueuePage = ({ items, onResolveItem, onReopenItem, setActivePage }) =>
       </header>
 
       <div className="talk-grid">
-        <section className="talk-column">
-          <div className="history-heading">
-            <span className="eyebrow">Open</span>
-            <strong>{openItems.length}</strong>
-          </div>
-          {openItems.length > 0 ? openItems.map((item) => (
-            <article className="talk-card" key={item.id}>
-              <span>{item.principleTitle} · {item.source}</span>
-              <h2>{item.prompt}</h2>
-              <p>{item.action}</p>
-              <button type="button" onClick={() => onResolveItem(item.id)}>Mark discussed</button>
-            </article>
-          )) : <p className="empty-talk">No open prompts. Add one from a reflection or principle page.</p>}
-        </section>
-
-        <section className="talk-column">
-          <div className="history-heading">
-            <span className="eyebrow">Discussed</span>
-            <strong>{resolvedItems.length}</strong>
-          </div>
-          {resolvedItems.length > 0 ? resolvedItems.map((item) => (
-            <article className="talk-card resolved" key={item.id}>
-              <span>{item.principleTitle}</span>
-              <h2>{item.prompt}</h2>
-              <button type="button" onClick={() => onReopenItem(item.id)}>Reopen</button>
-            </article>
-          )) : <p className="empty-talk">Resolved prompts will appear here.</p>}
-        </section>
+        {columns.map((column) => (
+          <section className="talk-column" key={column.id}>
+            <div className="history-heading">
+              <span className="eyebrow">{column.eyebrow}</span>
+              <strong>{column.items.length}</strong>
+            </div>
+            {column.items.length > 0 ? column.items.map((item) => (
+              <article className={`talk-card ${item.resolved ? 'resolved' : ''}`} key={item.id}>
+                <span>{item.principleTitle} · {item.source}</span>
+                <h2>{item.prompt}</h2>
+                <p>{item.action}</p>
+                {item.note && <small>{item.note}</small>}
+                <div className="talk-card-actions">
+                  {column.id !== 'open' && (
+                    <button type="button" onClick={() => onUpdateItem(item.id, 'open')}>Reopen</button>
+                  )}
+                  {column.id !== 'scheduled' && !item.resolved && (
+                    <button type="button" onClick={() => onUpdateItem(item.id, 'scheduled')}>Schedule</button>
+                  )}
+                  {column.id !== 'followup' && !item.resolved && (
+                    <button type="button" onClick={() => onUpdateItem(item.id, 'followup')}>Needs another talk</button>
+                  )}
+                  {column.id !== 'resolved' && (
+                    <button type="button" onClick={() => onUpdateItem(item.id, 'resolved')}>Resolve</button>
+                  )}
+                </div>
+              </article>
+            )) : (
+              <div className="empty-talk">
+                <p>{column.empty}</p>
+                {column.id === 'open' && (
+                  <button type="button" onClick={() => setActivePage('overview')}>Find a prompt</button>
+                )}
+              </div>
+            )}
+          </section>
+        ))}
       </div>
     </section>
   )
 }
+
+const RemindersPage = ({
+  notificationPermission,
+  onDisableNotifications,
+  onRequestNotifications,
+  onToggleReminder,
+  preferences,
+  reminders,
+  setActivePage,
+}) => {
+  const summary = getReminderSummary(reminders, preferences)
+  const canNotify = typeof window !== 'undefined' && 'Notification' in window
+
+  return (
+    <section className="reminders-page">
+      <header className="reminders-hero">
+        <div>
+          <span className="eyebrow">Check-up rhythm</span>
+          <h1>Reminders</h1>
+          <p>
+            Keep daily, weekly, and monthly check-ups from becoming another thing you meant to do later.
+            Browser reminders work while this app is allowed to send notifications.
+          </p>
+        </div>
+        <div className="reminder-status-card">
+          <span className="eyebrow">Current status</span>
+          <strong>{summary.title}</strong>
+          <p>{summary.detail}</p>
+        </div>
+      </header>
+
+      <section className="reminder-settings-grid">
+        <article className="reminder-settings-card">
+          <span className="eyebrow">Notifications</span>
+          <h2>{preferences.enabled ? 'Reminder nudges are on' : 'Turn on reminder nudges'}</h2>
+          <p>
+            {canNotify
+              ? `Browser permission is ${notificationPermission}.`
+              : 'This browser does not support notification permissions.'}
+          </p>
+          {preferences.enabled ? (
+            <button type="button" onClick={onDisableNotifications}>
+              Turn reminders off
+            </button>
+          ) : (
+            <button type="button" onClick={onRequestNotifications} disabled={!canNotify || notificationPermission === 'denied'}>
+              Enable reminders
+            </button>
+          )}
+          {notificationPermission === 'denied' && (
+            <small>Notifications are blocked in the browser. Change site settings to allow them.</small>
+          )}
+        </article>
+
+        <article className="reminder-settings-card">
+          <span className="eyebrow">Cadences</span>
+          <h2>Choose what should nudge you</h2>
+          <div className="reminder-toggle-list">
+            {Object.keys(questionSets).map((period) => (
+              <label key={period}>
+                <input
+                  checked={preferences[period]}
+                  onChange={() => onToggleReminder(period)}
+                  type="checkbox"
+                />
+                <span>
+                  <strong>{questionSets[period].title}</strong>
+                  <small>{questionSets[period].weightLabel}</small>
+                </span>
+              </label>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="reminder-timeline">
+        <div className="history-heading">
+          <span className="eyebrow">Today’s rhythm</span>
+          <strong>{reminders.filter((item) => item.isOpen).length} open</strong>
+        </div>
+        <div className="reminder-timeline-grid">
+          {reminders.map((item) => (
+            <article className={item.isOpen ? 'open' : ''} key={item.period}>
+              <span>{item.isOpen ? 'Open now' : 'Submitted'}</span>
+              <h2>{item.title}</h2>
+              <p>{item.detail}</p>
+              {item.lastSubmittedAt && <small>Last submitted {formatDateTime(item.lastSubmittedAt)}</small>}
+              <button type="button" onClick={() => setActivePage('checkups')}>
+                {item.isOpen ? 'Fill now' : 'View check-ups'}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+    </section>
+  )
+}
+
+const qaChecklist = [
+  {
+    title: 'Prepare the environment',
+    steps: [
+      'Run the latest supabase-schema.sql in the Supabase SQL editor.',
+      'Refresh the app in both browsers after the schema finishes.',
+      'Use two different accounts, or one normal browser and one private/incognito window.',
+    ],
+    expected: 'Both users can log in and see the auth-protected app without schema-cache or RLS errors.',
+  },
+  {
+    title: 'Create both profiles',
+    steps: [
+      'Sign in as User A and set a display name in Profile.',
+      'Sign in as User B and set a different display name in Profile.',
+      'Copy User B email or user ID.',
+    ],
+    expected: 'The header shows each display name instead of relying only on email.',
+  },
+  {
+    title: 'Send and accept a couple request',
+    steps: [
+      'As User A, look up User B by email or ID.',
+      'Send the couple request.',
+      'As User B, confirm the incoming request appears.',
+      'Accept the request.',
+    ],
+    expected: 'Both users leave onboarding and can access Overview, Check-ups, History, Talk, Reminders, and Profile.',
+  },
+  {
+    title: 'Submit the first check-up',
+    steps: [
+      'As User A, open Check-ups.',
+      'Submit the Daily check-up.',
+      'Confirm User A cannot submit Daily again in the same day.',
+      'As User B, refresh or wait for realtime sync.',
+    ],
+    expected: 'User B sees User A’s submission in Overview and History. The score changes from the starter baseline if answers are below 100.',
+  },
+  {
+    title: 'Submit the partner side',
+    steps: [
+      'As User B, submit their own Daily check-up.',
+      'Return to Overview in both accounts.',
+      'Open one principle detail page.',
+    ],
+    expected: 'Both accounts show both sides, updated gaps, and an adaptive prompt based on the current score band.',
+  },
+  {
+    title: 'Verify Talk sync',
+    steps: [
+      'Add an adaptive prompt to Talk from Overview or a principle detail page.',
+      'As the other user, open Talk.',
+      'Move the item to Scheduled.',
+      'Move it to Needs another talk.',
+      'Resolve it.',
+    ],
+    expected: 'Both users see the same Talk item and status changes without creating duplicates.',
+  },
+  {
+    title: 'Verify reminders',
+    steps: [
+      'Open Reminders.',
+      'Enable browser notifications if the browser asks.',
+      'Toggle Daily, Weekly, and Monthly cadences.',
+      'Return to Check-ups and confirm the same open/locked state appears.',
+    ],
+    expected: 'Reminder settings persist after refresh. The app does not repeatedly notify for the same submitted window.',
+  },
+]
+
+const QaChecklistPage = ({ setActivePage }) => (
+  <section className="qa-page">
+    <header className="qa-hero">
+      <div>
+        <span className="eyebrow">Two-user test plan</span>
+        <h1>QA Checklist</h1>
+        <p>
+          Run this after schema changes or major feature work. The point is to prove that two real users can pair,
+          submit feelings, see each other’s data, and use Talk without confusing errors.
+        </p>
+      </div>
+      <button type="button" onClick={() => setActivePage('overview')}>Back to overview</button>
+    </header>
+
+    <section className="qa-warning-card">
+      <span className="eyebrow">Before you start</span>
+      <h2>Use two sessions.</h2>
+      <p>
+        Keep User A in this browser and User B in a private window or another browser. If both users share one
+        session, the pairing and visibility checks will not prove the real couple flow.
+      </p>
+    </section>
+
+    <div className="qa-checklist">
+      {qaChecklist.map((section, index) => (
+        <article className="qa-card" key={section.title}>
+          <span className="qa-step-number">{index + 1}</span>
+          <div>
+            <h2>{section.title}</h2>
+            <ol>
+              {section.steps.map((step) => <li key={step}>{step}</li>)}
+            </ol>
+            <div className="qa-expected">
+              <strong>Expected result</strong>
+              <p>{section.expected}</p>
+            </div>
+          </div>
+        </article>
+      ))}
+    </div>
+
+    <section className="qa-warning-card">
+      <span className="eyebrow">If something fails</span>
+      <h2>Capture the exact point of failure.</h2>
+      <p>
+        Note the user, page, action, visible message, and whether refreshing changes the result. Most likely failures
+        are missing schema updates, stale Supabase schema cache, RLS policy errors, or realtime lag.
+      </p>
+    </section>
+  </section>
+)
 
 const HealthPage = ({
   checks,
@@ -1363,7 +2131,7 @@ const ProfilePage = ({ profile, profileExtras = { bio: '', social_links: {} }, s
           <span className="eyebrow">Personal profile</span>
           <h1>Your Profile</h1>
           <p>
-            Choose the name your partner sees in check-ups and add optional links that help your account feel like you.
+            Choose the name your partner sees in check-ups and add optional details that can sync across devices after the latest Supabase schema is applied.
           </p>
         </div>
         <button type="button" onClick={copyId}>{copied ? 'Copied ID' : 'Copy user ID'}</button>
@@ -1429,6 +2197,7 @@ const ProfilePage = ({ profile, profileExtras = { bio: '', social_links: {} }, s
 const OnboardingPage = ({
   couple,
   hasPartner,
+  history,
   onAcceptRequest,
   onCancelRequest,
   onCreateCouple,
@@ -1452,6 +2221,8 @@ const OnboardingPage = ({
   const outgoingCount = requests.filter((request) => request.direction === 'outgoing').length
   const displayName = profile?.display_name || session.user.email
   const partnerLabel = partnerProfile?.display_name || partnerProfile?.email || people.partner.label
+  const progress = getOnboardingProgress({ couple, hasPartner, history, profile })
+  const nextStep = progress.find((step) => !step.done) ?? progress[progress.length - 1]
 
   const copyId = async () => {
     try {
@@ -1477,6 +2248,31 @@ const OnboardingPage = ({
         </div>
         {hasPartner && <button type="button" onClick={onStartCheckup}>Start daily check-up</button>}
       </header>
+
+      <section className="onboarding-progress" aria-label="Setup progress">
+        {progress.map((step) => (
+          <article className={step.done ? 'done' : ''} key={step.title}>
+            <span>{step.done ? 'Done' : 'Next'}</span>
+            <strong>{step.title}</strong>
+            <p>{step.detail}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="next-action-card">
+        <div>
+          <span className="eyebrow">Next best step</span>
+          <h2>{nextStep.title}</h2>
+          <p>{nextStep.detail}</p>
+        </div>
+        {!profile?.display_name ? (
+          <button type="button" onClick={() => setActivePage('profile')}>Set profile</button>
+        ) : hasPartner ? (
+          <button type="button" onClick={onStartCheckup}>Open check-ups</button>
+        ) : (
+          <button type="button" onClick={copyId}>{copied ? 'Copied ID' : 'Copy your ID'}</button>
+        )}
+      </section>
 
       <div className="onboarding-steps">
         <article className="onboarding-step">
@@ -1571,7 +2367,20 @@ const OnboardingPage = ({
   )
 }
 
-const AuthForm = ({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, message, landing = false }) => {
+const ToastMessage = ({ message, onDismiss }) => {
+  if (!message) {
+    return null
+  }
+
+  return (
+    <aside className="toast-message" role="status" aria-live="polite">
+      <p>{message}</p>
+      <button type="button" onClick={onDismiss} aria-label="Dismiss message">x</button>
+    </aside>
+  )
+}
+
+const AuthForm = ({ onEmailSignIn, onEmailSignUp, landing = false }) => {
   const [authMode, setAuthMode] = useState('sign-in')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -1634,7 +2443,6 @@ const AuthForm = ({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, message, landi
           value={password}
         />
       </label>
-      {message && <p className="auth-error">{message}</p>}
       <button type="submit">{submitLabel}</button>
       <button
         className="secondary-button"
@@ -1643,14 +2451,11 @@ const AuthForm = ({ onGoogleSignIn, onEmailSignIn, onEmailSignUp, message, landi
       >
         {toggleLabel}
       </button>
-      <button className="secondary-button" type="button" onClick={onGoogleSignIn}>
-        Continue with Google
-      </button>
     </form>
   )
 }
 
-const AuthLanding = ({ message, onGoogleSignIn, onEmailSignIn, onEmailSignUp }) => (
+const AuthLanding = ({ message, onDismissMessage, onEmailSignIn, onEmailSignUp }) => (
   <main className="auth-landing-page">
     <section className="auth-landing-shell">
       <div className="auth-landing-copy">
@@ -1681,13 +2486,12 @@ const AuthLanding = ({ message, onGoogleSignIn, onEmailSignIn, onEmailSignUp }) 
         <h2>Log In or Sign Up</h2>
         <AuthForm
           landing
-          message={message}
-          onGoogleSignIn={onGoogleSignIn}
           onEmailSignIn={onEmailSignIn}
           onEmailSignUp={onEmailSignUp}
         />
       </section>
     </section>
+    <ToastMessage message={message} onDismiss={onDismissMessage} />
   </main>
 )
 
@@ -1815,9 +2619,14 @@ function App() {
   ])
   const [healthCheckedAt, setHealthCheckedAt] = useState(null)
   const [isHealthRunning, setIsHealthRunning] = useState(false)
+  const [reminderPreferences, setReminderPreferences] = useState(getStoredReminderPreferences)
+  const [notificationPermission, setNotificationPermission] = useState(
+    typeof window !== 'undefined' && 'Notification' in window ? window.Notification.permission : 'unsupported',
+  )
   const [statusMessage, setStatusMessage] = useState('')
 
   const scores = useMemo(() => calculateSubmittedCoupleScores(history), [history])
+  const reminderItems = useMemo(() => getReminderItems(history, 'me'), [history])
   const hasPartner = coupleMembers.length >= 2
   const partnerProfile = useMemo(() => (
     Object.values(coupleMemberProfiles).find((profile) => profile.id !== session?.user.id) ?? null
@@ -1825,6 +2634,55 @@ function App() {
   const partnerLabel = partnerProfile?.display_name || partnerProfile?.email || people.partner.label
   const isRemoteReady = isSupabaseConfigured && session && couple && hasPartner
   const shouldGateRemoteApp = isSupabaseConfigured && (!session || !couple || !hasPartner)
+
+  const saveReminderPreferences = (nextPreferences) => {
+    setReminderPreferences(nextPreferences)
+    window.localStorage.setItem(reminderPrefsKey, JSON.stringify(nextPreferences))
+  }
+
+  const requestNotificationPermission = async () => {
+    if (!('Notification' in window)) {
+      setStatusMessage('This browser does not support notifications.')
+      return
+    }
+
+    const permission = await window.Notification.requestPermission()
+    setNotificationPermission(permission)
+
+    if (permission === 'granted') {
+      saveReminderPreferences({ ...reminderPreferences, enabled: true })
+      setStatusMessage('Reminders are on. The app will nudge you when a selected check-up is open.')
+    } else if (permission === 'denied') {
+      saveReminderPreferences({ ...reminderPreferences, enabled: false })
+      setStatusMessage('Notifications are blocked in your browser settings.')
+    } else {
+      setStatusMessage('Notification permission was not enabled.')
+    }
+  }
+
+  const disableNotificationReminders = () => {
+    saveReminderPreferences({ ...reminderPreferences, enabled: false })
+    setStatusMessage('Reminders are off.')
+  }
+
+  const toggleReminderPreference = (period) => {
+    saveReminderPreferences({
+      ...reminderPreferences,
+      [period]: !reminderPreferences[period],
+    })
+  }
+
+  useEffect(() => {
+    if (!statusMessage) {
+      return undefined
+    }
+
+    const timer = window.setTimeout(() => {
+      setStatusMessage('')
+    }, 15000)
+
+    return () => window.clearTimeout(timer)
+  }, [statusMessage])
 
   const runHealthCheck = async () => {
     setIsHealthRunning(true)
@@ -1886,6 +2744,20 @@ function App() {
         requestTableError
           ? getFriendlyError(requestTableError, 'Could not read couple requests.')
           : 'The couple_requests table exists in the API schema and its select policy allows your account to query pending requests.',
+      )
+
+      const { error: talkTableError } = await supabase
+        .from('talk_items')
+        .select('id')
+        .limit(1)
+
+      addCheck(
+        'talk-items-table',
+        talkTableError ? 'fail' : 'pass',
+        talkTableError ? 'Shared Talk queue table is not reachable.' : 'Shared Talk queue table is reachable.',
+        talkTableError
+          ? getFriendlyError(talkTableError, 'Could not read shared Talk items.')
+          : 'The talk_items table exists and is available to the app.',
       )
 
       const { error: functionError } = await supabase.rpc('accept_couple_request', {
@@ -1974,6 +2846,33 @@ function App() {
   }, [responses, notes, history, discussionItems])
 
   useEffect(() => {
+    if (
+      !reminderPreferences.enabled
+      || notificationPermission !== 'granted'
+      || !('Notification' in window)
+      || (isSupabaseConfigured && !isRemoteReady)
+    ) {
+      return
+    }
+
+    const seenIds = getSeenReminderIds()
+    const nextSeenIds = [...seenIds]
+
+    reminderItems
+      .filter((item) => item.isOpen && reminderPreferences[item.period] && !seenIds.includes(item.notificationId))
+      .forEach((item) => {
+        new window.Notification(`${item.title} is open`, {
+          body: `Submit before ${formatDate(item.end)} so your partner can see your latest signal.`,
+        })
+        nextSeenIds.push(item.notificationId)
+      })
+
+    if (nextSeenIds.length !== seenIds.length) {
+      saveSeenReminderIds(nextSeenIds)
+    }
+  }, [isRemoteReady, notificationPermission, reminderItems, reminderPreferences])
+
+  useEffect(() => {
     if (!isSupabaseConfigured) {
       return undefined
     }
@@ -2029,10 +2928,32 @@ function App() {
 
     setProfile(data)
 
+    const localExtras = (() => {
+      try {
+        return JSON.parse(window.localStorage.getItem(getProfileExtrasKey(user.id))) ?? { bio: '', social_links: {} }
+      } catch {
+        return { bio: '', social_links: {} }
+      }
+    })()
+
     try {
-      setProfileExtras(JSON.parse(window.localStorage.getItem(getProfileExtrasKey(user.id))) ?? { bio: '', social_links: {} })
+      const { data: remoteExtras, error: extrasError } = await supabase
+        .from('profiles')
+        .select('bio, social_links')
+        .eq('id', user.id)
+        .single()
+
+      if (extrasError) {
+        setProfileExtras(localExtras)
+        return
+      }
+
+      setProfileExtras({
+        bio: remoteExtras?.bio ?? localExtras.bio ?? '',
+        social_links: remoteExtras?.social_links ?? localExtras.social_links ?? {},
+      })
     } catch {
-      setProfileExtras({ bio: '', social_links: {} })
+      setProfileExtras(localExtras)
     }
   }
 
@@ -2190,6 +3111,28 @@ function App() {
     setHistory(submissions.map((row) => mapSubmissionRow(row, currentSession.user.id, labels)))
   }
 
+  const loadRemoteTalkItems = async (currentCouple = couple) => {
+    if (!isSupabaseConfigured || !currentCouple) {
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('talk_items')
+      .select('*')
+      .eq('couple_id', currentCouple.id)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      if (isMissingTalkItemsTableError(error)) {
+        return
+      }
+
+      throw error
+    }
+
+    setDiscussionItems(data.map(mapTalkItemRow))
+  }
+
   useEffect(() => {
     if (!session) {
       return
@@ -2216,6 +3159,9 @@ function App() {
     const timer = window.setTimeout(() => {
       loadRemoteHistory(couple, session).catch((error) => {
         setStatusMessage(getFriendlyError(error, 'Could not load your shared check-up history.'))
+      })
+      loadRemoteTalkItems(couple).catch((error) => {
+        setStatusMessage(getFriendlyError(error, 'Could not load your shared Talk queue.'))
       })
     }, 0)
 
@@ -2296,6 +3242,9 @@ function App() {
       loadRemoteHistory(couple, session).catch((error) => {
         setStatusMessage(getFriendlyError(error, 'Could not refresh your shared dashboard.'))
       })
+      loadRemoteTalkItems(couple).catch((error) => {
+        setStatusMessage(getFriendlyError(error, 'Could not refresh your shared Talk queue.'))
+      })
     }
 
     const coupleMembersChannel = supabase
@@ -2326,26 +3275,27 @@ function App() {
       )
       .subscribe()
 
+    const talkItemsChannel = supabase
+      .channel(`couple-talk-items-${couple.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'talk_items',
+          filter: `couple_id=eq.${couple.id}`,
+        },
+        refreshCoupleData,
+      )
+      .subscribe()
+
     return () => {
       supabase.removeChannel(coupleMembersChannel)
       supabase.removeChannel(submissionsChannel)
+      supabase.removeChannel(talkItemsChannel)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [couple, session])
-
-  const handleSignIn = async () => {
-    setStatusMessage('')
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
-    })
-
-    if (error) {
-      setStatusMessage(getFriendlyError(error, 'Could not start Google sign-in.'))
-    }
-  }
 
   const handleEmailSignIn = async (email, password) => {
     setStatusMessage('')
@@ -2406,13 +3356,25 @@ function App() {
         bio: nextProfile.bio,
         social_links: nextProfile.social_links,
       }
+      const { data: remoteExtras, error: extrasError } = await supabase
+        .from('profiles')
+        .update(extras)
+        .eq('id', session.user.id)
+        .select('bio, social_links')
+        .single()
+
       window.localStorage.setItem(getProfileExtrasKey(session.user.id), JSON.stringify(extras))
-      setProfileExtras(extras)
+      setProfileExtras(extrasError ? extras : {
+        bio: remoteExtras?.bio ?? extras.bio,
+        social_links: remoteExtras?.social_links ?? extras.social_links,
+      })
       setCoupleMemberProfiles((current) => ({
         ...current,
         [data.id]: data,
       }))
-      setStatusMessage('Profile saved.')
+      setStatusMessage(extrasError
+        ? 'Profile saved. Optional details are stored on this device until you run the latest Supabase schema.'
+        : 'Profile saved.')
     } catch (error) {
       setStatusMessage(getFriendlyError(error, 'Could not save your profile.'))
     }
@@ -2428,14 +3390,10 @@ function App() {
         return null
       }
 
-      const isEmail = trimmedQuery.includes('@')
-      const filter = isEmail ? 'email' : 'id'
-
       const { data, error } = await supabase
-        .from('profiles')
-        .select('id, email, display_name')
-        .eq(filter, trimmedQuery)
-        .limit(1)
+        .rpc('find_profile_for_couple_request', {
+          profile_query: trimmedQuery,
+        })
 
       if (error) {
         throw error
@@ -2466,29 +3424,13 @@ function App() {
       setStatusMessage('')
       await upsertProfile(session)
 
-      const newCouple = {
-        id: crypto.randomUUID(),
-        invite_code: getInviteCode(),
-        created_by: session.user.id,
+      const { data, error } = await supabase.rpc('create_couple_workspace')
+
+      if (error) {
+        throw error
       }
 
-      const { error: coupleError } = await supabase.from('couples').insert(newCouple)
-
-      if (coupleError) {
-        throw coupleError
-      }
-
-      const { error: memberError } = await supabase.from('couple_members').insert({
-        couple_id: newCouple.id,
-        user_id: session.user.id,
-        role: 'owner',
-      })
-
-      if (memberError) {
-        throw memberError
-      }
-
-      setCouple({ id: newCouple.id, invite_code: newCouple.invite_code })
+      setCouple({ id: data.id, invite_code: data.invite_code })
       setCoupleMembers([
         { user_id: session.user.id },
       ])
@@ -2591,31 +3533,12 @@ function App() {
         return
       }
 
-      const { data: coupleRows, error: coupleError } = await supabase
-        .from('couples')
-        .select('id, invite_code')
-        .eq('invite_code', code)
-        .limit(1)
-
-      if (coupleError) {
-        throw coupleError
-      }
-
-      const coupleRow = coupleRows?.[0]
-
-      if (!coupleRow) {
-        setStatusMessage('No couple found with that invite code.')
-        return
-      }
-
-      const { error: memberError } = await supabase.from('couple_members').insert({
-        couple_id: coupleRow.id,
-        user_id: session.user.id,
-        role: 'partner',
+      const { data: coupleRow, error } = await supabase.rpc('join_couple_by_invite', {
+        target_invite_code: code,
       })
 
-      if (memberError) {
-        throw memberError
+      if (error) {
+        throw error
       }
 
       setCouple(coupleRow)
@@ -2650,7 +3573,46 @@ function App() {
     }))
   }
 
-  const addDiscussionItem = (item) => {
+  const addDiscussionItem = async (item) => {
+    if (isRemoteReady) {
+      const duplicate = discussionItems.some((existing) => (
+        existing.prompt === item.prompt && existing.source === item.source && !existing.resolved
+      ))
+
+      if (duplicate) {
+        return
+      }
+
+      const { error } = await supabase.from('talk_items').insert({
+        action: item.action,
+        couple_id: couple.id,
+        created_by: session.user.id,
+        principle_id: item.principleId,
+        principle_title: item.principleTitle,
+        prompt: item.prompt,
+        resolved: false,
+        source: item.source,
+      })
+
+      if (error) {
+        if (isMissingTalkItemsTableError(error)) {
+          setDiscussionItems((current) => {
+            if (current.some((existing) => existing.id === item.id)) {
+              return current
+            }
+
+            return [item, ...current].slice(0, 24)
+          })
+          return { storedRemotely: false, reason: 'missing-talk-table' }
+        }
+
+        throw error
+      }
+
+      await loadRemoteTalkItems(couple)
+      return { storedRemotely: true }
+    }
+
     setDiscussionItems((current) => {
       if (current.some((existing) => existing.id === item.id)) {
         return current
@@ -2658,28 +3620,43 @@ function App() {
 
       return [item, ...current].slice(0, 24)
     })
+
+    return { storedRemotely: false }
   }
 
-  const handleAddReflectionToTalk = (reflection) => {
-    addDiscussionItem(createDiscussionItem(reflection))
-    setStatusMessage('Added to the Talk queue.')
+  const handleAddReflectionToTalk = async (reflection) => {
+    try {
+      const result = await addDiscussionItem(createDiscussionItem(reflection))
+      setStatusMessage(result?.reason === 'missing-talk-table'
+        ? 'Added locally. Run the latest Supabase schema when you want Talk prompts to sync with your partner.'
+        : 'Added to the Talk queue.')
+    } catch (error) {
+      setStatusMessage(getFriendlyError(error, 'Could not add this prompt to the Talk queue.'))
+    }
   }
 
-  const handleAddPrinciplePrompt = (principleId) => {
+  const handleAddPrinciplePrompt = async (principleId) => {
     const principle = principles.find((item) => item.id === principleId) ?? principles[0]
-    const prompt = promptLibrary[principle.id]
+    const score = scores.couple.principleScores[principle.id]
+    const prompt = getAdaptivePrompt(principle.id, score, `manual-${principle.id}-${score}`)
 
-    addDiscussionItem({
-      id: `talk-${principle.id}-${Date.now()}`,
-      action: prompt.action,
-      createdAt: new Date().toISOString(),
-      principleId: principle.id,
-      principleTitle: principle.title,
-      prompt: prompt.prompt,
-      resolved: false,
-      source: 'Principle detail',
-    })
-    setStatusMessage('Added to the Talk queue.')
+    try {
+      const result = await addDiscussionItem({
+        id: `talk-${principle.id}-${Date.now()}`,
+        action: prompt.action,
+        createdAt: new Date().toISOString(),
+        principleId: principle.id,
+        principleTitle: principle.title,
+        prompt: prompt.prompt,
+        resolved: false,
+        source: `Principle detail · ${prompt.band} score`,
+      })
+      setStatusMessage(result?.reason === 'missing-talk-table'
+        ? 'Added locally. Run the latest Supabase schema when you want Talk prompts to sync with your partner.'
+        : 'Added to the Talk queue.')
+    } catch (error) {
+      setStatusMessage(getFriendlyError(error, 'Could not add this prompt to the Talk queue.'))
+    }
   }
 
   const handleOpenPrinciple = (principleId) => {
@@ -2687,9 +3664,53 @@ function App() {
     setActivePage('principle')
   }
 
-  const updateDiscussionItem = (itemId, resolved) => {
+  const updateDiscussionItem = async (itemId, status) => {
+    const resolved = status === 'resolved'
+
+    if (isRemoteReady) {
+      const payload = {
+        resolved,
+        resolved_at: resolved ? new Date().toISOString() : null,
+        status,
+      }
+      const { error } = await supabase
+        .from('talk_items')
+        .update(payload)
+        .eq('id', itemId)
+
+      if (error) {
+        if (error.message?.includes('talk_items.status') || error.message?.includes('schema cache')) {
+          const { error: legacyError } = await supabase
+            .from('talk_items')
+            .update({
+              resolved,
+              resolved_at: resolved ? new Date().toISOString() : null,
+            })
+            .eq('id', itemId)
+
+          if (!legacyError) {
+            await loadRemoteTalkItems(couple)
+            return
+          }
+        }
+
+        setStatusMessage(isMissingTalkItemsTableError(error)
+          ? 'This Talk item is saved locally until the shared Talk table is added in Supabase.'
+          : getFriendlyError(error, 'Could not update the Talk queue.'))
+        return
+      }
+
+      await loadRemoteTalkItems(couple)
+      return
+    }
+
     setDiscussionItems((current) => current.map((item) => (
-      item.id === itemId ? { ...item, resolved } : item
+      item.id === itemId ? {
+        ...item,
+        resolved,
+        resolvedAt: resolved ? new Date().toISOString() : null,
+        status,
+      } : item
     )))
   }
 
@@ -2753,8 +3774,10 @@ function App() {
         await loadRemoteHistory(couple, session)
         const reflection = createReflection(nextEntry, scores, partnerLabel)
         setLastReflection(reflection)
-        addDiscussionItem(createDiscussionItem(reflection))
-        setStatusMessage(error
+        const talkResult = await addDiscussionItem(createDiscussionItem(reflection))
+        setStatusMessage(talkResult?.reason === 'missing-talk-table'
+          ? 'Submitted. The Talk prompt was saved locally until the shared Talk table is added in Supabase.'
+          : error
           ? 'Submitted. Run the latest supabase-schema.sql soon so once-per-window limits are enforced by the database.'
           : 'Submitted to your couple workspace.')
         return
@@ -2764,17 +3787,15 @@ function App() {
       }
     }
 
-    setHistory((current) => {
-      const nextHistory = [
-        nextEntry,
-        ...current,
-      ].slice(0, 48)
-      const nextScores = calculateSubmittedCoupleScores(nextHistory)
-      const reflection = createReflection(nextEntry, nextScores, partnerLabel)
-      setLastReflection(reflection)
-      addDiscussionItem(createDiscussionItem(reflection))
-      return nextHistory
-    })
+    const nextHistory = [
+      nextEntry,
+      ...history,
+    ].slice(0, 48)
+    const nextScores = calculateSubmittedCoupleScores(nextHistory)
+    const reflection = createReflection(nextEntry, nextScores, partnerLabel)
+    setHistory(nextHistory)
+    setLastReflection(reflection)
+    await addDiscussionItem(createDiscussionItem(reflection))
   }
 
   const handleReset = (period, person) => {
@@ -2799,7 +3820,7 @@ function App() {
     return (
       <AuthLanding
         message={statusMessage}
-        onGoogleSignIn={handleSignIn}
+        onDismissMessage={() => setStatusMessage('')}
         onEmailSignIn={handleEmailSignIn}
         onEmailSignUp={handleEmailSignUp}
       />
@@ -2845,7 +3866,7 @@ function App() {
           )}
 
           <div className="nav-links" aria-label="Dashboard sections">
-            {navItems.map((item) => (
+            {navItems.filter((item) => !item.devOnly || import.meta.env.DEV).map((item) => (
               <button
                 className={activePage === item.id ? 'active' : ''}
                 type="button"
@@ -2867,7 +3888,7 @@ function App() {
           />
         )}
 
-        {statusMessage && <p className="status-message">{statusMessage}</p>}
+        <ToastMessage message={statusMessage} onDismiss={() => setStatusMessage('')} />
 
         <ReflectionPanel
           reflection={lastReflection}
@@ -2897,10 +3918,21 @@ function App() {
         ) : activePage === 'talk' ? (
           <TalkQueuePage
             items={discussionItems}
-            onReopenItem={(itemId) => updateDiscussionItem(itemId, false)}
-            onResolveItem={(itemId) => updateDiscussionItem(itemId, true)}
+            onUpdateItem={updateDiscussionItem}
             setActivePage={setActivePage}
           />
+        ) : activePage === 'reminders' ? (
+          <RemindersPage
+            notificationPermission={notificationPermission}
+            onDisableNotifications={disableNotificationReminders}
+            onRequestNotifications={requestNotificationPermission}
+            onToggleReminder={toggleReminderPreference}
+            preferences={reminderPreferences}
+            reminders={reminderItems}
+            setActivePage={setActivePage}
+          />
+        ) : activePage === 'qa' ? (
+          <QaChecklistPage setActivePage={setActivePage} />
         ) : activePage === 'principle' ? (
           <PrincipleDetailPage
             history={history}
@@ -2914,6 +3946,7 @@ function App() {
           <OnboardingPage
             couple={couple}
             hasPartner={hasPartner}
+            history={history}
             onAcceptRequest={handleAcceptRequest}
             onCancelRequest={handleCancelRequest}
             onCreateCouple={handleCreateCouple}
@@ -2930,6 +3963,7 @@ function App() {
           />
         ) : activePage === 'overview' ? (
           <Overview
+            onAddPrompt={handleAddPrinciplePrompt}
             onOpenPrinciple={handleOpenPrinciple}
             scores={scores}
             history={history}
